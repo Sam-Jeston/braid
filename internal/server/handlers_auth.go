@@ -10,6 +10,7 @@ import (
 
 	"github.com/sam-jeston/braid/internal/api"
 	"github.com/sam-jeston/braid/internal/authn"
+	"github.com/sam-jeston/braid/internal/workflow"
 )
 
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) error {
@@ -136,10 +137,12 @@ func (s *Server) handleCreateTeam(w http.ResponseWriter, r *http.Request) error 
 		return err
 	}
 	req.Team.Name = strings.TrimSpace(req.Team.Name)
-	req.Team.RepoURL = strings.TrimSpace(req.Team.RepoURL)
-	req.Team.DefaultBranch = strings.TrimSpace(req.Team.DefaultBranch)
 	if req.Team.Name == "" || len(req.Team.Name) > 80 {
 		return errf(400, "invalid_team", "team name is required (max 80 characters)")
+	}
+	repos, err := workflow.NormalizeRepos(req.Team.Repos)
+	if err != nil {
+		return errf(400, "invalid_repos", "%s", err)
 	}
 	if err := validateNewMember(&req.Member, true); err != nil {
 		return err
@@ -151,7 +154,7 @@ func (s *Server) handleCreateTeam(w http.ResponseWriter, r *http.Request) error 
 		return err
 	}
 	var resp api.JoinResponse
-	err := s.tx(r.Context(), func(tx *Tx) error {
+	err = s.tx(r.Context(), func(tx *Tx) error {
 		ctx := r.Context()
 		var codeID string
 		err := tx.QueryRowContext(ctx, `SELECT id FROM setup_codes WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?`,
@@ -163,11 +166,10 @@ func (s *Server) handleCreateTeam(w http.ResponseWriter, r *http.Request) error 
 		}
 		now := s.now()
 		team := api.Team{
-			ID: authn.NewID("team"), Name: req.Team.Name, RepoURL: req.Team.RepoURL, DefaultBranch: req.Team.DefaultBranch,
-			Output: req.Team.Output, CreatedAt: now,
+			ID: authn.NewID("team"), Name: req.Team.Name, Repos: repos, Output: req.Team.Output, CreatedAt: now,
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO teams (id, name, repo_url, default_branch, output_json, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-			team.ID, team.Name, team.RepoURL, team.DefaultBranch, mustJSON(team.Output), ms(now)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO teams (id, name, repos_json, output_json, created_at) VALUES (?, ?, ?, ?, ?)`,
+			team.ID, team.Name, mustJSON(team.Repos), mustJSON(team.Output), ms(now)); err != nil {
 			return err
 		}
 		m, deviceID, err := s.insertMemberAndDevice(ctx, tx, team.ID, req.Member, req.Member.Roles, true, req.Device)

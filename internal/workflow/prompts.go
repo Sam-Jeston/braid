@@ -9,15 +9,6 @@ import (
 	"github.com/sam-jeston/braid/internal/api"
 )
 
-// RepoInfo describes the codebase checkout available to a local run.
-type RepoInfo struct {
-	Dir       string
-	Commit    string
-	URL       string
-	Available bool
-	Note      string // why it is unavailable, if it is
-}
-
 // PromptInput is everything a stage agent needs, assembled from the shared
 // thread state. Every run is stateless: whichever teammate's machine executes
 // it, the agent sees the same context.
@@ -65,18 +56,23 @@ func preamble(repo RepoInfo) string {
 
 Ground rules:
 `)
-	if repo.Available {
-		fmt.Fprintf(&b, "- The team's codebase is checked out READ-ONLY at `%s`", repo.Dir)
-		if repo.Commit != "" {
-			fmt.Fprintf(&b, " (commit %s)", short(repo.Commit))
+	switch {
+	case !repo.Available():
+		fmt.Fprintf(&b, "- The codebase is NOT available on this machine (%s). Rely on the codebase brief in the context and clearly flag anything that needs verification against the code.\n", repo.Unavailable())
+	case !repo.multi():
+		c := repo.Checkouts[0]
+		fmt.Fprintf(&b, "- The team's codebase is checked out READ-ONLY at `%s`", c.Dir)
+		if c.Commit != "" {
+			fmt.Fprintf(&b, " (commit %s)", short(c.Commit))
 		}
 		b.WriteString(". Read it to ground every claim, and cite concrete file paths relative to the repo root (e.g. `src/billing/invoice.ts`). Never modify files in the codebase.\n")
-	} else {
-		note := repo.Note
-		if note == "" {
-			note = "no checkout configured"
-		}
-		fmt.Fprintf(&b, "- The codebase is NOT available on this machine (%s). Rely on the codebase brief in the context and clearly flag anything that needs verification against the code.\n", note)
+	default:
+		b.WriteString("- The team's codebase spans several repositories, each checked out READ-ONLY:\n")
+		b.WriteString(checkoutList(repo, "  "))
+		fmt.Fprintf(&b, "  Read them to ground every claim, and cite concrete file paths prefixed with the repository name (e.g. `%s/src/billing/invoice.ts`). Never modify files in the codebase.\n", repo.Checkouts[0].Name)
+	}
+	if repo.Available() && len(repo.Missing) > 0 {
+		fmt.Fprintf(&b, "- Not available on this machine: %s. For those, rely on the codebase brief and flag anything that needs verification against the code.\n", strings.Join(repo.Missing, "; "))
 	}
 	b.WriteString(`- Your current working directory is a scratch space owned by Braid. The documents you maintain for this stage live there: edit them in place (create them if missing). Only the stage documents are kept; anything else you write there is discarded.
 - Approved work from earlier stages is copied into ./upstream/ for reference. Treat it as decided unless the team reopens that stage.
@@ -310,20 +306,28 @@ func userContext(in PromptInput) string {
 }
 
 // ScanPrompt builds the prompt for the initial (or refreshed) codebase scan.
+// It needs at least one checkout: the runner refuses to scan without one.
 func ScanPrompt(team api.Team, repo RepoInfo) (system, user string) {
-	system = fmt.Sprintf(`You are Braid's codebase scout. The team %q is connecting this repository to Braid so that product, design and engineering agents can ground their work in the code.
+	what, where, explore := "this repository", "The repository is checked out READ-ONLY at `"+repo.Checkouts[0].Dir+"`. Never modify it.", "the repository"
+	architecture, domains := "(main apps, services and packages and how they talk to each other)", "(domain → paths)"
+	if repo.multi() {
+		what, where, explore = "these repositories", "The repositories are checked out READ-ONLY. Never modify them.\n"+checkoutList(repo, ""), "every repository"
+		architecture = "(each repository's role, its main apps, services and packages, and how they talk to each other)"
+		domains = "(domain → repository/paths)"
+	}
+	system = fmt.Sprintf(`You are Braid's codebase scout. The team %q is connecting %s to Braid so that product, design and engineering agents can ground their work in the code.
 
-The repository is checked out READ-ONLY at %s. Never modify it. Your working directory is a Braid scratch space: write your documents there.`, team.Name, "`"+repo.Dir+"`")
-	user = `Explore the repository and write two documents in your working directory.
+%s Your working directory is a Braid scratch space: write your documents there.`, team.Name, what, where)
+	user = `Explore ` + explore + ` and write two documents in your working directory.
 
 1. ` + "`codebase-brief.md`" + ` (roughly 600–1200 words), with these sections:
 # Codebase brief
 ## What this product is
 ## Tech stack
 ## Architecture
-(main apps, services and packages and how they talk to each other)
+` + architecture + `
 ## Key domains
-(domain → paths)
+` + domains + `
 ## Data model
 (main entities/tables and where they are defined)
 ## UI layer
@@ -336,10 +340,26 @@ The repository is checked out READ-ONLY at %s. Never modify it. Your working dir
 2. ` + "`rules.md`" + `: 5–15 concise, imperative rules agents must follow when proposing work in this codebase (e.g. "New API endpoints go through src/api/router.ts and validate input with zod"). Only include rules you can justify from the code.
 
 Your final reply (posted to the team): 3–5 sentences summarizing what you found.`
-	if repo.Commit != "" {
-		user += "\n\nCommit: " + repo.Commit
+	if len(repo.Missing) > 0 {
+		user += "\n\nThese repositories couldn't be checked out on this machine, so say in the brief that they weren't scanned: " + strings.Join(repo.Missing, "; ")
+	}
+	if rev := repo.Revision(); rev != "" {
+		user += "\n\nCommit: " + rev
 	}
 	return system, user
+}
+
+// checkoutList renders one line per checkout: "- `name` at `dir` (commit abc)".
+func checkoutList(repo RepoInfo, indent string) string {
+	var b strings.Builder
+	for _, c := range repo.Checkouts {
+		fmt.Fprintf(&b, "%s- `%s` at `%s`", indent, c.Name, c.Dir)
+		if c.Commit != "" {
+			fmt.Fprintf(&b, " (commit %s)", short(c.Commit))
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 func roleList(rs []api.Role) string {

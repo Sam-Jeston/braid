@@ -250,7 +250,7 @@ func (a *API) cancelRun(w http.ResponseWriter, r *http.Request) (any, error) {
 func (a *API) syncRepo(w http.ResponseWriter, r *http.Request) (any, error) {
 	ctx, cancel := ctxTimeout(r, 20*time.Minute)
 	defer cancel()
-	return a.core.SyncRepo(ctx, true)
+	return a.core.SyncRepos(ctx, true)
 }
 
 func (a *API) publish(w http.ResponseWriter, r *http.Request) (any, error) {

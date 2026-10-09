@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -47,7 +48,7 @@ func TestPipeline(t *testing.T) {
 	_, err = priya.CreateTeam(ctx, CreateTeamInput{
 		JoinInput: JoinInput{ServerURL: hs.URL, Code: setup, DisplayName: "Priya", Email: "priya@example.com"},
 		Roles:     []api.Role{api.RoleProduct},
-		Team:      api.TeamSettings{Name: "Acme", RepoURL: repoDir, Output: api.OutputTarget{Type: api.OutputMarkdown}},
+		Team:      api.TeamSettings{Name: "Acme", Repos: []api.RepoRef{{URL: repoDir}}, Output: api.OutputTarget{Type: api.OutputMarkdown}},
 	})
 	if err != nil {
 		t.Fatalf("create team: %v", err)
@@ -231,6 +232,109 @@ func TestReopenLocksDownstream(t *testing.T) {
 	}
 }
 
+func TestMultipleRepos(t *testing.T) {
+	t.Setenv("BRAID_FAKE_AGENT", "1")
+	t.Setenv("BRAID_FAKE_DELAY_MS", "1")
+	t.Setenv("BRAID_SECRETS", "file")
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv, _ := server.New(server.Config{DBPath: filepath.Join(t.TempDir(), "b.db"), Logger: log})
+	defer srv.Close()
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+	code, _ := srv.CreateSetupCode(ctx, time.Hour)
+	web, backend, localWeb := makeRepo(t), makeRepo(t), makeRepo(t)
+
+	c := newCore(t, log)
+	defer c.Shutdown()
+	if _, err := c.CreateTeam(ctx, CreateTeamInput{
+		JoinInput: JoinInput{ServerURL: hs.URL, Code: code, DisplayName: "Sam"},
+		Roles:     api.AllRoles,
+		Team:      api.TeamSettings{Name: "Multi", Repos: []api.RepoRef{{Name: "web", URL: web}, {URL: backend, Branch: "main"}}, Output: api.OutputTarget{Type: "markdown"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c.UpdateSettings(SettingsPatch{Agent: ptr("fake")})
+	waitFor(t, "connected", func() bool { return c.State().Connection == "connected" })
+	team := remote[api.Team](t, c, "GET", "/v1/team", nil)
+	second := filepath.Base(backend) // derived from the path
+	if len(team.Repos) != 2 || team.Repos[0].Name != "web" || team.Repos[1].Name != second || team.Repos[1].Branch != "main" {
+		t.Fatalf("repos = %+v", team.Repos)
+	}
+
+	// Branches that git could read as options never reach members' machines.
+	bad := []api.RepoRef{{URL: web, Branch: "--upload-pack=touch /tmp/pwned"}}
+	if _, err := proxyErrBody(c, "PATCH", "/v1/team", api.TeamPatch{Repos: &bad}); err == nil {
+		t.Fatal("accepted a branch that looks like a git option")
+	}
+
+	// This member reads web from their own checkout.
+	if err := c.UpdateSettings(SettingsPatch{RepoOverrides: map[string]string{"web": localWeb}}); err != nil {
+		t.Fatal(err)
+	}
+
+	d := remote[api.ThreadDetail](t, c, "POST", "/v1/threads", api.CreateThreadRequest{Title: "Idea", Body: "An idea"})
+	run, err := c.StartRun(ctx, StartRunInput{ThreadID: d.Thread.ID, Stage: api.StageSparring})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitRun(t, c, run.ID)
+	run = remote[api.Run](t, c, "GET", "/v1/runs/"+run.ID, nil)
+	if !regexp.MustCompile(`^web@[0-9a-f]{10} ` + regexp.QuoteMeta(second) + `@[0-9a-f]{10}$`).MatchString(run.CommitSHA) {
+		t.Errorf("commit = %q, want both repositories' revisions", run.CommitSHA)
+	}
+	out := remote[api.RunOutputResponse](t, c, "GET", "/v1/runs/"+run.ID+"/output", nil)
+	read := map[string]bool{}
+	for _, it := range out.Items {
+		if it.Kind == "tool" && it.Tool == "Read" {
+			read[it.Detail] = true
+		}
+	}
+	if !read["web/README.md"] || !read[second+"/src/app.ts"] {
+		t.Errorf("agent didn't read both repositories, labelled by name: %v", read)
+	}
+
+	st := c.State()
+	if len(st.Repos) != 2 || st.Repos[0].State != "override" || st.Repos[0].Override != localWeb || st.Repos[0].Dir != localWeb ||
+		st.Repos[1].State != "ready" || st.Repos[1].Override != "" {
+		t.Fatalf("repo states = %+v", st.Repos)
+	}
+
+	// A scan covers every repository.
+	scan, err := c.StartScan(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitRun(t, c, scan.ID)
+	if team = remote[api.Team](t, c, "GET", "/v1/team", nil); !strings.HasPrefix(team.ScanCommit, "web@") {
+		t.Errorf("scan commit = %q", team.ScanCommit)
+	}
+
+	// Clearing the override goes back to the managed clone.
+	c.UpdateSettings(SettingsPatch{RepoOverrides: map[string]string{"web": ""}})
+	if st := c.State(); st.Repos[0].Override != "" {
+		t.Fatalf("override not cleared: %+v", st.Repos[0])
+	}
+	if _, err := c.SyncRepos(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	if st := c.State(); st.Repos[0].State != "ready" || st.Repos[0].Dir == localWeb {
+		t.Fatalf("web should be a managed clone again: %+v", st.Repos[0])
+	}
+}
+
+func TestLegacyRepoOverride(t *testing.T) {
+	p := Profile{RepoOverride: "/code/app"}
+	repos := []api.RepoRef{{Name: "app"}, {Name: "api"}}
+	if p.overrideFor(repos, 0) != "/code/app" || p.overrideFor(repos, 1) != "" {
+		t.Fatal("the old single-repository override should apply to the first repository only")
+	}
+	p.RepoOverrides = map[string]string{"app": "/elsewhere"}
+	if p.overrideFor(repos, 0) != "/elsewhere" {
+		t.Fatal("a per-repository override wins over the old setting")
+	}
+}
+
 // --- helpers ---
 
 func ptr[T any](v T) *T { return &v }
@@ -309,6 +413,18 @@ func remote[T any](t *testing.T, c *Core, method, path string, in any) T {
 
 func proxyErr(c *Core, method, path string) ([]byte, error) {
 	status, resp, err := c.Proxy(context.Background(), method, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if status >= 300 {
+		return resp, &httpErr{status}
+	}
+	return resp, nil
+}
+
+func proxyErrBody(c *Core, method, path string, in any) ([]byte, error) {
+	body, _ := json.Marshal(in)
+	status, resp, err := c.Proxy(context.Background(), method, path, body)
 	if err != nil {
 		return nil, err
 	}

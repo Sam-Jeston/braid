@@ -5,7 +5,7 @@ import { Markdown } from "../markdown";
 import { ensureRunOutput, errorToast, useStore } from "../store";
 import type { Message, Run, RunOutput } from "../types";
 import { Avatar, Badge, Button } from "../ui";
-import { agentName, cx, duration, possessive } from "../util";
+import { agentName, cx, duration, possessive, shortRevision } from "../util";
 
 const toolIcon = (tool = "") =>
   /read/i.test(tool) ? "eye" : /grep|glob|search/i.test(tool) ? "list" : /write|edit/i.test(tool) ? "edit" : /shell|bash/i.test(tool) ? "terminal" : "bolt";
@@ -116,7 +116,7 @@ export function RunCard({ run, reply, touched = [], title }: { run: Run; reply?:
         <span className="muted small mono">{duration(run.started_at, run.finished_at)}</span>
         {run.commit_sha && (
           <span className="muted small mono" title={`Codebase at ${run.commit_sha}`}>
-            <Icon name="commit" size={12} /> {run.commit_sha.slice(0, 7)}
+            <Icon name="commit" size={12} /> {shortRevision(run.commit_sha, 7)}
           </span>
         )}
         {running && (

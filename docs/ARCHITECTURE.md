@@ -11,7 +11,7 @@
 | Component | Runs where | Responsibilities |
 |---|---|---|
 | `braid-server` | your infrastructure | Teams, members, invites, device keys, threads, stage state machine, versioned artifacts, run records, event log + websocket fan-out, abandoned-run reaper |
-| local core (`internal/local`) | each member's machine | Device identity, realtime session with replay, repo checkout, agent execution, output streaming, exports, loopback API for the UI |
+| local core (`internal/local`) | each member's machine | Device identity, realtime session with replay, repo checkouts, agent execution, output streaming, exports, loopback API for the UI |
 | UI (`frontend/`) | Wails webview or browser | Talks *only* to the local core. Remote calls go through the core's authenticated proxy (`/remote/v1/*`). |
 
 ## Authentication
@@ -57,25 +57,34 @@ Sparring ───────────────────► Design ─
 - Members can hold several roles. Admins edit roles and mint invites.
 - Artifacts are append-only versions. An empty-content version is a tombstone (e.g. a rejected mockup). Humans can edit documents between runs; the next run builds on their edits.
 
+## Repositories
+
+A team lists one or more repositories (`teams.repos_json`). One is the norm; more suit products that span several codebases. Each has a short name, unique in the team, derived from its URL (`workflow.NormalizeRepos`). Agents see each checkout under that name and cite paths as `name/path` when there's more than one. Branches and URLs are validated on the server because they reach `git` on every member's machine.
+
+Each member's core keeps its own clone of every repository under `<home>/repos/<team>/<name>`, using that member's git credentials. A member can point any repository at an existing local checkout instead (`repo_overrides` in their profile), which Braid reads as-is and never resets.
+
 ## Agent execution
 
 ```
 UI "Ask agent" ─► core.StartRun
   1. POST /v1/runs (claims the stage; teammates see "Priya's agent is working")
-  2. git fetch/reset the managed clone (or use the configured local checkout as-is)
+  2. git fetch/reset a managed clone of each team repository, concurrently
+     (or use the member's local checkout for it as-is); a repo that can't be
+     synced is skipped and the prompt says so
   3. GET thread → build prompt (workflow.StagePrompt)
   4. materialize run dir: current stage docs (editable) + upstream/<stage>/… (reference)
   5. spawn the agent CLI; normalize its stream → RunOutput items
      batched every 300ms to POST /v1/runs/{id}/output (doubles as heartbeat)
   6. collect changed/new stage docs from the run dir (validate plan.json, with one repair attempt)
   7. POST /v1/runs/{id}/finish {status, reply, artifacts, commit_sha, cost}
+     (commit_sha is the SHA, or "name@sha name@sha" with several repositories)
      → server stores new artifact versions + the agent's reply message atomically
 ```
 
-**Claude Code** runs as `claude -p --output-format stream-json --verbose --include-partial-messages --restricted --tools Read,Grep,Glob,Write,Edit --add-dir <repo> --disallowedTools Write(/<repo>/**) Edit(/<repo>/**) --permission-mode acceptEdits --permission-prompts none --no-session-persistence`. In that mode:
+**Claude Code** runs as `claude -p --output-format stream-json --verbose --include-partial-messages --restricted --tools Read,Grep,Glob,Write,Edit --add-dir <repo>… --disallowedTools Write(/<repo>/**) Edit(/<repo>/**)… --permission-mode acceptEdits --permission-prompts none --no-session-persistence`. In that mode:
 
 - there are no shell or web tools, and the user's own settings and hooks are ignored;
-- file tools are confined to the run dir and the repo, and the repo is read-only.
+- file tools are confined to the run dir and the team's repositories, and every repository is read-only.
 
 The prompt goes over stdin, so there's no argv size limit.
 
@@ -97,7 +106,7 @@ Every state change is written to `events` in the same transaction as the change,
 
 ## Data model (SQLite)
 
-`teams`, `members` (roles JSON, admin flag), `devices` (public keys), `sessions` (hashed tokens), `invites` / `setup_codes` (hashed), `threads`, `thread_stages` (status, approval, design selection, active run), `messages` (human/agent/system), `runs`, `artifacts` (versioned), `exports`, `events`.
+`teams` (repositories and output target as JSON), `members` (roles JSON, admin flag), `devices` (public keys), `sessions` (hashed tokens), `invites` / `setup_codes` (hashed), `threads`, `thread_stages` (status, approval, design selection, active run), `messages` (human/agent/system), `runs`, `artifacts` (versioned), `exports`, `events`.
 
 ## Publishing
 

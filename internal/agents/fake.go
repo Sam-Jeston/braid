@@ -51,7 +51,7 @@ func (f *Fake) Run(ctx context.Context, spec Spec, emit func(api.RunOutput)) (Re
 	if err := step(api.RunOutput{Kind: "status", Text: "Fake agent started"}); err != nil {
 		return Result{}, err
 	}
-	files := repoFiles(spec.RepoDir, 6)
+	files := repoFiles(spec, 6)
 	for _, f := range files {
 		if err := step(api.RunOutput{Kind: "tool", Tool: "Read", Detail: f}); err != nil {
 			return Result{}, err
@@ -138,24 +138,27 @@ Effort signal: **M**.
 	return Result{Reply: reply}, nil
 }
 
-func repoFiles(dir string, n int) []string {
-	if dir == "" {
-		return nil
-	}
+// repoFiles lists up to n files from the checkouts, labelled as run activity shows them.
+func repoFiles(spec Spec, n int) []string {
+	roots := spec.roots()
 	var out []string
-	_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
-		if err != nil || len(out) >= n {
-			return filepath.SkipDir
-		}
-		if d.IsDir() && strings.HasPrefix(d.Name(), ".") && p != dir {
-			return filepath.SkipDir
-		}
-		if !d.IsDir() {
-			out = append(out, rel(p, dir))
-		}
-		return nil
-	})
-	sort.Strings(out)
+	for _, r := range spec.Repos {
+		var files []string
+		_ = filepath.WalkDir(r.Dir, func(p string, d os.DirEntry, err error) error {
+			if err != nil || len(out)+len(files) >= n {
+				return filepath.SkipDir
+			}
+			if d.IsDir() && strings.HasPrefix(d.Name(), ".") && p != r.Dir {
+				return filepath.SkipDir
+			}
+			if !d.IsDir() {
+				files = append(files, rel(p, roots))
+			}
+			return nil
+		})
+		sort.Strings(files)
+		out = append(out, files...)
+	}
 	return out
 }
 

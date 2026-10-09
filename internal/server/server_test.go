@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -142,4 +144,44 @@ func toLowerWithSpaces(s string) string {
 		}
 	}
 	return string(b)
+}
+
+func TestMigrateSingleRepoTeams(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	// A database from before teams could have several repositories.
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		migrations[0],
+		`PRAGMA user_version = 1`,
+		`INSERT INTO teams (id, name, repo_url, default_branch, created_at) VALUES ('team_a', 'A', 'https://github.com/acme/web.git', 'main', 0)`,
+		`INSERT INTO teams (id, name, repo_url, default_branch, created_at) VALUES ('team_b', 'B', '', '', 0)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	db.Close()
+
+	s, err := New(Config{DBPath: path, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	a, err := getTeam(context.Background(), s.db, "team_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []api.RepoRef{{Name: "web", URL: "https://github.com/acme/web.git", Branch: "main"}}; !reflect.DeepEqual(a.Repos, want) {
+		t.Errorf("migrated repos = %+v, want %+v", a.Repos, want)
+	}
+	b, err := getTeam(context.Background(), s.db, "team_b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Repos == nil || len(b.Repos) != 0 {
+		t.Errorf("a team without a repository should have an empty list, got %#v", b.Repos)
+	}
 }

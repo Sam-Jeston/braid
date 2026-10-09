@@ -12,14 +12,21 @@ export interface OutputTarget {
   config: Record<string, string>;
 }
 
+/** One repository the team's agents read. The name is unique within the team. */
+export interface RepoRef {
+  name: string;
+  url: string;
+  branch: string;
+}
+
 export interface Team {
   id: string;
   name: string;
-  repo_url: string;
-  default_branch: string;
+  repos: RepoRef[];
   output: OutputTarget;
   codebase_brief: string;
   rules: string;
+  /** A SHA, or "name@sha name@sha" for several repositories (same as Run.commit_sha). */
   scan_commit: string;
   scanned_at: string | null;
   created_at: string;
@@ -169,6 +176,7 @@ export interface Profile {
   member_id: string;
   device_id: string;
   display_name: string;
+  repo_overrides?: Record<string, string>;
   repo_override?: string;
 }
 
@@ -180,7 +188,9 @@ export interface AgentInfo {
   error?: string;
 }
 
+/** This machine's checkout of one team repository. */
 export interface RepoStatus {
+  name: string;
   state: "none" | "cloning" | "syncing" | "ready" | "override" | "error";
   dir: string;
   commit: string;
@@ -188,6 +198,8 @@ export interface RepoStatus {
   branch: string;
   error?: string;
   synced_at?: string | null;
+  /** Local folder this member reads instead of a managed clone. */
+  override?: string;
 }
 
 export interface StageDescription {
@@ -211,7 +223,7 @@ export interface LocalState {
   agents: AgentInfo[];
   agent: string;
   agent_model: string;
-  repo: RepoStatus;
+  repos: RepoStatus[];
   secret_backend: string;
   credentials: Record<string, boolean>;
   jira_email: string;

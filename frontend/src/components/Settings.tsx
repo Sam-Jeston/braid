@@ -3,9 +3,10 @@ import { local, remote } from "../api";
 import { Icon } from "../icons";
 import { Markdown } from "../markdown";
 import { errorToast, go, startScan, toast, useStore } from "../store";
-import type { Invite, OutputType, Role, Team } from "../types";
+import type { Invite, OutputType, RepoRef, Role, Team } from "../types";
 import { Avatar, Badge, Button, CopyButton, Field, Modal, RoleChip, RolePicker, Segmented } from "../ui";
-import { cx, outputLabel, timeAgo } from "../util";
+import { cx, outputLabel, shortRevision, timeAgo } from "../util";
+import { RepoList } from "./RepoList";
 import { RunCard } from "./RunCard";
 
 type Tab = "team" | "members" | "device";
@@ -40,8 +41,7 @@ function TeamSettings() {
   const team = l.team!;
   const admin = !!l.me?.is_admin;
   const [name, setName] = useState(team.name);
-  const [repo, setRepo] = useState(team.repo_url);
-  const [branch, setBranch] = useState(team.default_branch);
+  const [repos, setRepos] = useState<RepoRef[]>(team.repos);
   const [outType, setOutType] = useState<OutputType>(team.output.type);
   const [cfg, setCfg] = useState<Record<string, string>>(team.output.config || {});
   const [saving, setSaving] = useState(false);
@@ -51,7 +51,8 @@ function TeamSettings() {
   async function save() {
     setSaving(true);
     try {
-      await remote<Team>("PATCH", "/team", { name, repo_url: repo, default_branch: branch, output: { type: outType, config: cfg } });
+      const saved = await remote<Team>("PATCH", "/team", { name, repos, output: { type: outType, config: cfg } });
+      setRepos(saved.repos);
       toast("Team settings saved", "success");
     } catch (e) {
       errorToast(e);
@@ -76,14 +77,12 @@ function TeamSettings() {
         <Field label="Name">
           <input value={name} disabled={!admin} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <div className="grid-2-1">
-          <Field label="Repository" hint="Each member's app keeps its own read-only clone.">
-            <input className="mono" value={repo} disabled={!admin} onChange={(e) => setRepo(e.target.value)} />
-          </Field>
-          <Field label="Branch">
-            <input className="mono" value={branch} disabled={!admin} placeholder="default" onChange={(e) => setBranch(e.target.value)} />
-          </Field>
-        </div>
+        <RepoList
+          value={repos}
+          onChange={setRepos}
+          disabled={!admin}
+          hint="Each member's app keeps its own read-only clone. Most teams need one; add more when your product spans several codebases."
+        />
         <Field label="Publish plans to">
           <Segmented
             value={outType}
@@ -130,12 +129,12 @@ function TeamSettings() {
       <section className="card">
         <div className="card-head">
           <h3>Shared agent context</h3>
-          <Button size="sm" icon="refresh" disabled={scanRun?.status === "running" || !team.repo_url} onClick={() => startScan()}>
+          <Button size="sm" icon="refresh" disabled={scanRun?.status === "running" || !team.repos.length} onClick={() => startScan()}>
             Rescan codebase on this machine
           </Button>
         </div>
         <p className="muted small">
-          Every agent run, on anyone's machine, gets these two documents. Last scan: {team.scanned_at ? `${timeAgo(team.scanned_at)} at ${team.scan_commit.slice(0, 8)}` : "never"}.
+          Every agent run, on anyone's machine, gets these two documents. Last scan: {team.scanned_at ? `${timeAgo(team.scanned_at)} at ${shortRevision(team.scan_commit)}` : "never"}.
         </p>
         {scanRun?.status === "running" && <RunCard run={scanRun} title="Codebase scan" />}
         {(["rules", "codebase_brief"] as const).map((k) => (
@@ -341,13 +340,14 @@ function MembersSettings() {
 function DeviceSettings() {
   const l = useStore((s) => s.local)!;
   const [model, setModel] = useState(l.agent_model);
-  const [override, setOverride] = useState(l.active?.repo_override || "");
+  const [overrides, setOverrides] = useState<Record<string, string>>({});
   const [linear, setLinear] = useState("");
   const [jiraEmail, setJiraEmail] = useState(l.jira_email);
   const [jiraToken, setJiraToken] = useState("");
   const [exportDir, setExportDir] = useState(l.export_dir);
   const [syncing, setSyncing] = useState(false);
   const target = l.team?.output.type;
+  const repos = l.team?.repos || [];
 
   const patch = (body: object, msg = "Saved") =>
     local("PUT", "/settings", body)
@@ -391,7 +391,7 @@ function DeviceSettings() {
 
       <section className="card">
         <div className="card-head">
-          <h3>Codebase checkout</h3>
+          <h3>{repos.length > 1 ? "Codebase checkouts" : "Codebase checkout"}</h3>
           <Button
             size="sm"
             icon="refresh"
@@ -405,22 +405,32 @@ function DeviceSettings() {
             Sync now
           </Button>
         </div>
-        <div className="kv">
-          <span>Status</span>
-          <span className={cx("repo-state", `repo-${l.repo.state}`)}>{l.repo.error || l.repo.state}</span>
-          <span>Location</span>
-          <code>{l.repo.dir || "—"}</code>
-          <span>Commit</span>
-          <code>{l.repo.commit || "—"}</code>
-        </div>
-        <Field label="Use an existing local checkout instead" hint="Braid reads it as-is and never resets it. Leave blank to let Braid manage its own clone.">
-          <div className="inline-input">
-            <input className="mono" value={override} onChange={(e) => setOverride(e.target.value)} placeholder="/home/you/code/app" />
-            <Button size="sm" onClick={() => patch({ repo_override: override })}>
-              Save
-            </Button>
-          </div>
-        </Field>
+        {repos.length === 0 && <p className="muted small">Your team hasn't added a repository yet.</p>}
+        {repos.map((r) => {
+          const st = l.repos.find((x) => x.name === r.name);
+          const override = overrides[r.name] ?? st?.override ?? "";
+          return (
+            <div key={r.name} className="checkout">
+              {repos.length > 1 && <h4 className="mono">{r.name}</h4>}
+              <div className="kv">
+                <span>Status</span>
+                <span className={cx("repo-state", `repo-${st?.state || "none"}`)}>{st?.error || st?.state || "none"}</span>
+                <span>Location</span>
+                <code>{st?.dir || "—"}</code>
+                <span>Commit</span>
+                <code>{st?.commit || "—"}</code>
+              </div>
+              <Field label="Use an existing local checkout instead" hint="Braid reads it as-is and never resets it. Leave blank to let Braid manage its own clone.">
+                <div className="inline-input">
+                  <input className="mono" value={override} onChange={(e) => setOverrides({ ...overrides, [r.name]: e.target.value })} placeholder={`/home/you/code/${r.name}`} />
+                  <Button size="sm" onClick={() => patch({ repo_overrides: { [r.name]: override } })}>
+                    Save
+                  </Button>
+                </div>
+              </Field>
+            </div>
+          );
+        })}
       </section>
 
       <section className="card">

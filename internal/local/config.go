@@ -10,19 +10,37 @@ import (
 	"time"
 
 	"github.com/zalando/go-keyring"
+
+	"github.com/sam-jeston/braid/internal/api"
 )
 
 // Profile is one team membership on one server.
 type Profile struct {
-	ID           string `json:"id"`
-	ServerURL    string `json:"server_url"`
-	ServerID     string `json:"server_id"`
-	TeamID       string `json:"team_id"`
-	TeamName     string `json:"team_name"`
-	MemberID     string `json:"member_id"`
-	DeviceID     string `json:"device_id"`
-	DisplayName  string `json:"display_name"`
+	ID          string `json:"id"`
+	ServerURL   string `json:"server_url"`
+	ServerID    string `json:"server_id"`
+	TeamID      string `json:"team_id"`
+	TeamName    string `json:"team_name"`
+	MemberID    string `json:"member_id"`
+	DeviceID    string `json:"device_id"`
+	DisplayName string `json:"display_name"`
+	// RepoOverrides maps a team repository's name to a local checkout this
+	// member wants agents to read as-is instead of Braid's managed clone.
+	RepoOverrides map[string]string `json:"repo_overrides,omitempty"`
+	// RepoOverride is the single-repository setting from before teams could
+	// have several. It applies to the team's first repository until replaced.
 	RepoOverride string `json:"repo_override,omitempty"`
+}
+
+// overrideFor returns the local checkout to use for the team's i-th repository, if any.
+func (p Profile) overrideFor(repos []api.RepoRef, i int) string {
+	if dir := p.RepoOverrides[repos[i].Name]; dir != "" {
+		return dir
+	}
+	if i == 0 {
+		return p.RepoOverride
+	}
+	return ""
 }
 
 type Config struct {

@@ -21,13 +21,36 @@ import (
 
 // Spec describes one agent invocation.
 type Spec struct {
-	Dir     string // writable working directory (Braid scratch space)
-	RepoDir string // read-only codebase checkout; empty when unavailable
-	System  string // appended to the agent's system prompt
-	Prompt  string // task + context, sent on stdin
-	Model   string // optional model override
-	Stage   string // informational
+	Dir    string // writable working directory (Braid scratch space)
+	Repos  []Repo // read-only codebase checkouts; empty when unavailable
+	System string // appended to the agent's system prompt
+	Prompt string // task + context, sent on stdin
+	Model  string // optional model override
+	Stage  string // informational
 }
+
+// Repo is one read-only checkout the agent may read.
+type Repo struct {
+	Name string
+	Dir  string
+}
+
+// roots maps the directories an agent touches to the labels shown in run
+// activity: paths in the run dir and in a lone repo are shown bare, and
+// with several repos they're prefixed by the repo's name.
+func (s Spec) roots() []root {
+	var out []root
+	for _, r := range s.Repos {
+		label := ""
+		if len(s.Repos) > 1 {
+			label = r.Name
+		}
+		out = append(out, root{dir: r.Dir, label: label})
+	}
+	return append(out, root{dir: s.Dir})
+}
+
+type root struct{ dir, label string }
 
 type Result struct {
 	Reply   string
@@ -228,16 +251,19 @@ func lastLines(s string, n int) string {
 }
 
 // rel shortens absolute paths for display; a root itself becomes "".
-func rel(p string, roots ...string) string {
+func rel(p string, roots []root) string {
 	for _, r := range roots {
-		if r == "" {
+		dir := strings.TrimRight(r.dir, "/")
+		if dir == "" {
 			continue
 		}
-		r = strings.TrimRight(r, "/")
-		if p == r {
-			return ""
+		if p == dir {
+			return r.label
 		}
-		if x, ok := strings.CutPrefix(p, r+"/"); ok {
+		if x, ok := strings.CutPrefix(p, dir+"/"); ok {
+			if r.label != "" {
+				return r.label + "/" + x
+			}
 			return x
 		}
 	}
@@ -245,10 +271,14 @@ func rel(p string, roots ...string) string {
 }
 
 // relAll shortens every occurrence of the roots inside a command line.
-func relAll(s string, roots ...string) string {
+func relAll(s string, roots []root) string {
 	for _, r := range roots {
-		if r != "" {
-			s = strings.ReplaceAll(s, strings.TrimRight(r, "/")+"/", "")
+		if dir := strings.TrimRight(r.dir, "/"); dir != "" {
+			prefix := ""
+			if r.label != "" {
+				prefix = r.label + "/"
+			}
+			s = strings.ReplaceAll(s, dir+"/", prefix)
 		}
 	}
 	return s

@@ -15,7 +15,7 @@ The desktop core, shared by `cmd/braid` (browser UI) and `desktop/` (Wails).
 - Only paths allowed by `workflow.ValidArtifactPath` / `ValidScanPath` are collected. Deleted mockups become tombstones.
 - `pump` batches output every 300ms and doubles as the heartbeat. Server-side, a run that misses heartbeats for 2 minutes is marked abandoned. A 409 from the server means the run was closed remotely, so stop work on it.
 - Always report a finish (`c.finish` retries). Cancelled runs upload no artifacts.
-- Don't `git reset` the managed clone while a run is using it (`activeRunsFor`).
+- Each team repository has its own managed clone, synced concurrently (`syncRepos`). Don't `git reset` a clone while a run is using it (`activeRunsFor`): later runs only sync what's missing.
 
 ## Loopback API (`api.go`)
 
@@ -27,5 +27,6 @@ The desktop core, shared by `cmd/braid` (browser UI) and `desktop/` (Wails).
 
 - `config.json` holds non-secret settings only. Device private keys (`device-key:<profile>`) and tracker tokens go through `Secrets`: the OS keychain, or `secrets.json` (0600) when there's no keychain or `BRAID_SECRETS=file` is set. The backend is chosen once and recorded.
 - Each team profile has its own keypair, and `server_id` is pinned at join time.
+- Local checkouts that replace managed clones are per repository name (`Profile.RepoOverrides`). The older single `RepoOverride` still applies to the first repository until the member saves an override.
 
 Tests: `e2e_test.go` runs two cores against a real in-process server with the fake agent. Use `-race`.

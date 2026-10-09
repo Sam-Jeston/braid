@@ -1,4 +1,4 @@
-import type { LocalState, Member, Role, Stage, StageState, Thread } from "./types";
+import type { LocalState, Member, RepoStatus, Role, Stage, StageState, Thread } from "./types";
 
 export const cx = (...xs: (string | false | null | undefined)[]) => xs.filter(Boolean).join(" ");
 
@@ -103,4 +103,23 @@ export function agentName(id: string): string {
 
 export function outputLabel(type: string): string {
   return type === "linear" ? "Linear" : type === "jira" ? "Jira" : "Markdown";
+}
+
+/** Shortens a codebase revision: a SHA, or "name@sha" pairs when the team has several repositories. */
+export function shortRevision(rev: string, n = 8): string {
+  return rev
+    .split(" ")
+    .map((part) => {
+      const at = part.lastIndexOf("@");
+      return at >= 0 ? `${part.slice(0, at)}@${part.slice(at + 1, at + 1 + n)}` : part.slice(0, n);
+    })
+    .join(" ");
+}
+
+/** Describes this machine's checkout of a repository. */
+export function checkoutLabel(r: RepoStatus | undefined): string {
+  if (!r || r.state === "none") return "syncs on first agent run";
+  if (r.state === "ready" || r.state === "override") return `${r.commit.slice(0, 8)} · ${r.state === "override" ? "local folder" : r.branch}`;
+  if (r.state === "error") return r.error || "couldn't sync";
+  return `${r.state}…`;
 }

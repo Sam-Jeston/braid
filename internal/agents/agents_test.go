@@ -3,6 +3,7 @@ package agents
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -33,7 +34,7 @@ func collectOutputs() (*[]api.RunOutput, func(api.RunOutput)) {
 // into the read-only repo.
 func TestClaudeParser(t *testing.T) {
 	out, emit := collectOutputs()
-	p := &claudeParser{emit: emit, roots: []string{"/work/repo", "/work/run"}}
+	p := &claudeParser{emit: emit, roots: Spec{Dir: "/work/run", Repos: []Repo{{Name: "app", Dir: "/work/repo"}}}.roots()}
 	feed(t, "testdata/claude.jsonl", p.line)
 
 	if !p.done || p.isError {
@@ -70,7 +71,7 @@ func TestClaudeParser(t *testing.T) {
 }
 
 func TestClaudeArgsLockRepo(t *testing.T) {
-	args := strings.Join((&Claude{}).Args(Spec{Dir: "/tmp/run", RepoDir: "/src/app/", System: "sys", Model: "sonnet"}), " ")
+	args := strings.Join((&Claude{}).Args(Spec{Dir: "/tmp/run", Repos: []Repo{{Name: "app", Dir: "/src/app/"}}, System: "sys", Model: "sonnet"}), " ")
 	for _, want := range []string{"--restricted", "--add-dir /src/app", "Write(//src/app/**)", "Edit(//src/app/**)", "--model sonnet", "--permission-prompts none"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("args missing %q: %s", want, args)
@@ -78,9 +79,63 @@ func TestClaudeArgsLockRepo(t *testing.T) {
 	}
 }
 
+func TestClaudeArgsLockEveryRepo(t *testing.T) {
+	args := strings.Join((&Claude{}).Args(Spec{Dir: "/tmp/run", Repos: []Repo{{Name: "web", Dir: "/src/web"}, {Name: "api", Dir: "/src/api"}}}), " ")
+	want := "--add-dir /src/web /src/api --disallowedTools Write(//src/web/**) Edit(//src/web/**) Write(//src/api/**) Edit(//src/api/**)"
+	if !strings.Contains(args, want) {
+		t.Errorf("args = %s\nwant them to contain %s", args, want)
+	}
+}
+
+func TestClaudeArgsWithoutRepo(t *testing.T) {
+	args := strings.Join((&Claude{}).Args(Spec{Dir: "/tmp/run"}), " ")
+	if strings.Contains(args, "--add-dir") || strings.Contains(args, "--disallowedTools") {
+		t.Errorf("no repo, but args grant or deny one: %s", args)
+	}
+}
+
+func TestRelLabelsPaths(t *testing.T) {
+	one := Spec{Dir: "/run", Repos: []Repo{{Name: "app", Dir: "/repos/app/"}}}.roots()
+	two := Spec{Dir: "/run", Repos: []Repo{{Name: "web", Dir: "/repos/web"}, {Name: "api", Dir: "/repos/api"}}}.roots()
+	cases := []struct {
+		roots []root
+		in    string
+		want  string
+	}{
+		{one, "/repos/app/src/main.go", "src/main.go"},
+		{one, "/repos/app", ""},
+		{one, "/run/brief.md", "brief.md"},
+		{one, "/etc/hosts", "/etc/hosts"},
+		{two, "/repos/api/server.go", "api/server.go"},
+		{two, "/repos/web", "web"},
+		{two, "/run/brief.md", "brief.md"},
+	}
+	for _, c := range cases {
+		if got := rel(c.in, c.roots); got != c.want {
+			t.Errorf("rel(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	if got := relAll("rg auth /repos/web/src /repos/api/internal", two); got != "rg auth web/src api/internal" {
+		t.Errorf("relAll = %q", got)
+	}
+}
+
+func TestFakeReadsEveryRepo(t *testing.T) {
+	webDir, apiDir := t.TempDir(), t.TempDir()
+	for dir, file := range map[string]string{webDir: "index.ts", apiDir: "main.go"} {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := repoFiles(Spec{Repos: []Repo{{Name: "web", Dir: webDir}, {Name: "api", Dir: apiDir}}}, 6)
+	if strings.Join(files, ",") != "web/index.ts,api/main.go" {
+		t.Errorf("files = %v", files)
+	}
+}
+
 func TestCodexParser(t *testing.T) {
 	out, emit := collectOutputs()
-	p := &codexParser{emit: emit, roots: []string{"/work/repo", "/work/run2"}}
+	p := &codexParser{emit: emit, roots: Spec{Dir: "/work/run2", Repos: []Repo{{Name: "app", Dir: "/work/repo"}}}.roots()}
 	feed(t, "testdata/codex.jsonl", p.line)
 	if !p.completed || p.failure != "" || strings.TrimSpace(p.last) != "done" {
 		t.Fatalf("unexpected parser state %+v", p)

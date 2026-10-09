@@ -68,7 +68,7 @@ make desktop-windows                 # cross-compiles bin/Braid.exe (WebView2)
 
 ### 3. Create or join a team
 
-- **Create:** server URL + setup code, your roles, the repository (any git URL your machine can clone), and where plans go (Linear team key / Jira site + project / Markdown). Braid then scans the codebase on your machine and writes a shared *codebase brief* and *agent rules* that every future run gets.
+- **Create:** server URL + setup code, your roles, the repository (any git URL your machine can clone; add more if your product spans several), and where plans go (Linear team key / Jira site + project / Markdown). Braid then scans the codebase on your machine and writes a shared *codebase brief* and *agent rules* that every future run gets.
 - **Join:** server URL + an invite code from **Settings → Members & invites**. Invites carry roles and expire.
 
 Then pick your agent and add tracker credentials in **Settings → This device**.

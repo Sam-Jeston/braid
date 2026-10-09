@@ -8,6 +8,7 @@ import (
 
 	"github.com/sam-jeston/braid/internal/api"
 	"github.com/sam-jeston/braid/internal/authn"
+	"github.com/sam-jeston/braid/internal/workflow"
 )
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, a *authCtx) error {
@@ -34,7 +35,7 @@ func (s *Server) handlePatchTeam(w http.ResponseWriter, r *http.Request, a *auth
 		return err
 	}
 	// Any member may curate the codebase brief and rules; structural settings are admin-only.
-	if (p.Name != nil || p.RepoURL != nil || p.DefaultBranch != nil || p.Output != nil) && !a.member.IsAdmin {
+	if (p.Name != nil || p.Repos != nil || p.Output != nil) && !a.member.IsAdmin {
 		return errf(403, "forbidden", "only team admins can change team settings")
 	}
 	var team api.Team
@@ -50,11 +51,12 @@ func (s *Server) handlePatchTeam(w http.ResponseWriter, r *http.Request, a *auth
 			}
 			team.Name = strings.TrimSpace(*p.Name)
 		}
-		if p.RepoURL != nil {
-			team.RepoURL = strings.TrimSpace(*p.RepoURL)
-		}
-		if p.DefaultBranch != nil {
-			team.DefaultBranch = strings.TrimSpace(*p.DefaultBranch)
+		if p.Repos != nil {
+			repos, err := workflow.NormalizeRepos(*p.Repos)
+			if err != nil {
+				return errf(400, "invalid_repos", "%s", err)
+			}
+			team.Repos = repos
 		}
 		if p.Output != nil {
 			if err := validateOutput(p.Output); err != nil {
@@ -68,8 +70,8 @@ func (s *Server) handlePatchTeam(w http.ResponseWriter, r *http.Request, a *auth
 		if p.Rules != nil {
 			team.Rules = *p.Rules
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE teams SET name = ?, repo_url = ?, default_branch = ?, output_json = ?, codebase_brief = ?, rules = ? WHERE id = ?`,
-			team.Name, team.RepoURL, team.DefaultBranch, mustJSON(team.Output), team.CodebaseBrief, team.Rules, team.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE teams SET name = ?, repos_json = ?, output_json = ?, codebase_brief = ?, rules = ? WHERE id = ?`,
+			team.Name, mustJSON(team.Repos), mustJSON(team.Output), team.CodebaseBrief, team.Rules, team.ID); err != nil {
 			return err
 		}
 		return tx.emit(team.ID, "", "", api.EvTeamUpdated, a.member.ID, team)

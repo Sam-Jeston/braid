@@ -1,9 +1,9 @@
-import { useEffect } from "react";
+import { Fragment, useEffect } from "react";
 import { Icon } from "../icons";
 import { Markdown } from "../markdown";
 import { go, loadLatestScan, setState, startScan, useStore } from "../store";
 import { Button } from "../ui";
-import { agentName, cx, STAGE_ORDER, STAGES, stageState, timeAgo } from "../util";
+import { agentName, checkoutLabel, cx, shortRevision, STAGE_ORDER, STAGES, stageState, timeAgo } from "../util";
 import { RunCard } from "./RunCard";
 
 export function Home() {
@@ -65,27 +65,33 @@ export function Home() {
             <Button
               size="sm"
               icon="refresh"
-              disabled={scanRun?.status === "running" || !agent?.available || !team?.repo_url}
+              disabled={scanRun?.status === "running" || !agent?.available || !team?.repos.length}
               onClick={() => startScan()}
             >
               {team?.scanned_at ? "Rescan" : "Scan now"}
             </Button>
           </div>
           <div className="kv">
-            <span>Repository</span>
-            <code>{team?.repo_url || "not configured"}</code>
-            <span>Your checkout</span>
-            <span className={cx("repo-state", `repo-${l.repo.state}`)}>
-              {l.repo.state === "ready" || l.repo.state === "override"
-                ? `${l.repo.commit.slice(0, 8)} · ${l.repo.state === "override" ? "local folder" : l.repo.branch}`
-                : l.repo.state === "error"
-                  ? l.repo.error
-                  : l.repo.state === "none"
-                    ? "syncs on first agent run"
-                    : `${l.repo.state}…`}
-            </span>
+            {!team?.repos.length && (
+              <>
+                <span>Repository</span>
+                <code>not configured</code>
+              </>
+            )}
+            {team?.repos.map((r) => {
+              const st = l.repos.find((x) => x.name === r.name);
+              return (
+                <Fragment key={r.name}>
+                  <span>{team.repos.length > 1 ? r.name : "Repository"}</span>
+                  <div className="repo-cell">
+                    <code>{r.url}</code>
+                    <span className={cx("repo-state", "small", `repo-${st?.state || "none"}`)}>Your checkout: {checkoutLabel(st)}</span>
+                  </div>
+                </Fragment>
+              );
+            })}
             <span>Last scan</span>
-            <span>{team?.scanned_at ? `${timeAgo(team.scanned_at)} at ${team.scan_commit.slice(0, 8)}` : "never"}</span>
+            <span>{team?.scanned_at ? `${timeAgo(team.scanned_at)} at ${shortRevision(team.scan_commit)}` : "never"}</span>
             <span>Your agent</span>
             <span>
               {agent?.available ? (

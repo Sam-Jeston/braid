@@ -235,7 +235,7 @@ export function applyEvent(ev: BraidEvent) {
       if (d.status === "connected") loadLocal().then(() => (state.threadsLoaded ? undefined : loadThreads())).catch(() => {});
       return;
     case "local.repo":
-      updateLocal(() => ({ repo: d }));
+      updateLocal((l) => ({ repos: l.repos.map((r) => (r.name === d.name ? { ...r, ...d } : r)) }));
       return;
     case "local.resync":
       refreshAll();

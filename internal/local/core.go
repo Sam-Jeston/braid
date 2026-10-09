@@ -155,7 +155,7 @@ type State struct {
 	Agents          []agents.Info      `json:"agents"`
 	Agent           string             `json:"agent"`
 	AgentModel      string             `json:"agent_model"`
-	Repo            repo.Status        `json:"repo"`
+	Repos           []RepoState        `json:"repos"`
 	SecretBackend   string             `json:"secret_backend"`
 	Credentials     map[string]bool    `json:"credentials"`
 	JiraEmail       string             `json:"jira_email"`
@@ -163,6 +163,12 @@ type State struct {
 	LocalRuns       []string           `json:"local_runs"`
 	Stages          []stageDescription `json:"stages"`
 	Extra           map[string]string  `json:"extra,omitempty"`
+}
+
+// RepoState is this machine's checkout of one team repository.
+type RepoState struct {
+	repo.Status
+	Override string `json:"override,omitempty"` // local checkout this member chose instead of a managed clone
 }
 
 type stageDescription struct {
@@ -186,7 +192,7 @@ func (c *Core) State() State {
 		Agent: c.cfg.Agent, AgentModel: c.cfg.AgentModel, SecretBackend: c.secrets.Backend(),
 		JiraEmail: c.cfg.JiraEmail, ExportDir: c.exportDir(), Connection: "offline",
 		Credentials: map[string]bool{}, LocalRuns: []string{}, Members: []api.Member{},
-		Stages: stageDescriptions(),
+		Repos: []RepoState{}, Stages: stageDescriptions(),
 	}
 	for _, k := range []string{secretLinear, secretJira} {
 		_, err := c.secrets.Get(k)
@@ -203,8 +209,12 @@ func (c *Core) State() State {
 		st.Me, st.Team = s.me, s.team
 		st.Members = append(st.Members, s.members...)
 		st.Connection, st.ConnectionError = s.status, s.statusErr
+		var repos []api.RepoRef
+		if s.team != nil {
+			repos = s.team.Repos
+		}
 		s.mu.Unlock()
-		st.Repo = c.repos.Status(p.TeamID)
+		st.Repos = c.repoStates(p, repos)
 	}
 	return st
 }
@@ -279,7 +289,9 @@ func (c *Core) CreateTeam(ctx context.Context, in CreateTeamInput) (Profile, err
 	if err != nil {
 		return Profile{}, err
 	}
-	in.Team.RepoURL = repo.NormalizeURL(in.Team.RepoURL)
+	for i := range in.Team.Repos {
+		in.Team.Repos[i].URL = repo.NormalizeURL(in.Team.Repos[i].URL)
+	}
 	resp, err := client.CreateTeam(ctx, pr.URL, api.CreateTeamRequest{
 		SetupCode: in.Code,
 		Team:      in.Team,
@@ -408,11 +420,12 @@ func (c *Core) Leave(ctx context.Context, profileID string) error {
 // --- settings ---
 
 type SettingsPatch struct {
-	Agent        *string `json:"agent,omitempty"`
-	AgentModel   *string `json:"agent_model,omitempty"`
-	RepoOverride *string `json:"repo_override,omitempty"`
-	JiraEmail    *string `json:"jira_email,omitempty"`
-	ExportDir    *string `json:"export_dir,omitempty"`
+	Agent      *string `json:"agent,omitempty"`
+	AgentModel *string `json:"agent_model,omitempty"`
+	// RepoOverrides sets (or, with an empty path, clears) local checkouts by repository name.
+	RepoOverrides map[string]string `json:"repo_overrides,omitempty"`
+	JiraEmail     *string           `json:"jira_email,omitempty"`
+	ExportDir     *string           `json:"export_dir,omitempty"`
 }
 
 func (c *Core) UpdateSettings(p SettingsPatch) error {
@@ -433,16 +446,33 @@ func (c *Core) UpdateSettings(p SettingsPatch) error {
 	if p.ExportDir != nil {
 		c.cfg.ExportDir = strings.TrimSpace(*p.ExportDir)
 	}
-	if p.RepoOverride != nil && c.sess != nil {
-		dir := strings.TrimSpace(*p.RepoOverride)
-		if dir != "" {
-			if abs, err := filepath.Abs(dir); err == nil {
-				dir = abs
-			}
-		}
+	if p.RepoOverrides != nil && c.sess != nil {
 		if prof := c.cfg.profile(c.sess.profile.ID); prof != nil {
-			prof.RepoOverride = dir
-			c.sess.profile.RepoOverride = dir
+			// Profiles are copied by value elsewhere, so build a new map rather than editing the shared one.
+			next := map[string]string{}
+			for name, dir := range prof.RepoOverrides {
+				next[name] = dir
+			}
+			if prof.RepoOverride != "" {
+				// Carry the old single-repository setting over to the first repository.
+				c.sess.mu.Lock()
+				if t := c.sess.team; t != nil && len(t.Repos) > 0 && next[t.Repos[0].Name] == "" {
+					next[t.Repos[0].Name] = prof.RepoOverride
+				}
+				c.sess.mu.Unlock()
+			}
+			for name, dir := range p.RepoOverrides {
+				if dir = strings.TrimSpace(dir); dir == "" {
+					delete(next, name)
+					continue
+				}
+				if abs, err := filepath.Abs(dir); err == nil {
+					dir = abs
+				}
+				next[name] = dir
+			}
+			prof.RepoOverrides, prof.RepoOverride = next, ""
+			c.sess.profile.RepoOverrides, c.sess.profile.RepoOverride = next, ""
 		}
 	}
 	err := c.saveConfig()
@@ -482,21 +512,64 @@ func (c *Core) session() (*session, error) {
 	return c.sess, nil
 }
 
-// SyncRepo refreshes the codebase checkout for the active team.
-func (c *Core) SyncRepo(ctx context.Context, force bool) (repo.Status, error) {
+// SyncRepos refreshes this machine's checkouts of the active team's repositories.
+func (c *Core) SyncRepos(ctx context.Context, force bool) ([]RepoState, error) {
 	s, err := c.session()
 	if err != nil {
-		return repo.Status{}, err
+		return nil, err
 	}
 	team, err := s.freshTeam(ctx)
 	if err != nil {
-		return repo.Status{}, err
+		return nil, err
 	}
+	prof := s.profileSnapshot()
 	if !force && c.activeRunsFor(team.ID) > 0 {
-		// Never move the checkout under a running agent.
-		return c.repos.Status(team.ID), nil
+		// Never move a checkout under a running agent.
+		return c.repoStates(prof, team.Repos), nil
 	}
-	return c.repos.Sync(ctx, team.ID, team.RepoURL, team.DefaultBranch, s.profileSnapshot().RepoOverride, force)
+	var errs []error
+	for i, st := range c.syncRepos(ctx, team, prof, force, false) {
+		if !st.Available() {
+			errs = append(errs, fmt.Errorf("%s: %s", team.Repos[i].Name, st.Error))
+		}
+	}
+	return c.repoStates(prof, team.Repos), errors.Join(errs...)
+}
+
+// syncRepos syncs the team's repositories concurrently and returns their
+// statuses in team order. With onlyMissing, checkouts that are already
+// usable are left alone.
+func (c *Core) syncRepos(ctx context.Context, team api.Team, prof Profile, force, onlyMissing bool) []repo.Status {
+	out := make([]repo.Status, len(team.Repos))
+	var wg sync.WaitGroup
+	for i, r := range team.Repos {
+		if out[i] = c.repos.Status(team.ID, r.Name); onlyMissing && out[i].Available() {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			st, err := c.repos.Sync(ctx, team.ID, r, prof.overrideFor(team.Repos, i), force)
+			if err != nil && st.Error == "" {
+				st.State, st.Error = "error", err.Error()
+			}
+			out[i] = st
+		}()
+	}
+	wg.Wait()
+	return out
+}
+
+func (c *Core) repoStates(p Profile, repos []api.RepoRef) []RepoState {
+	out := []RepoState{}
+	for i, r := range repos {
+		st := c.repos.Status(p.TeamID, r.Name)
+		if st.URL == "" {
+			st.URL, st.Branch = r.URL, r.Branch
+		}
+		out = append(out, RepoState{Status: st, Override: p.overrideFor(repos, i)})
+	}
+	return out
 }
 
 func (c *Core) activeRunsFor(teamID string) int {

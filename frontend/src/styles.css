@@ -978,6 +978,46 @@ input[type="checkbox"] {
 .kv code {
   word-break: break-all;
 }
+.repo-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.repo-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 8px;
+  align-items: center;
+}
+.repo-row.removable {
+  grid-template-columns: 2fr 1fr auto;
+}
+.repo-row + .repo-row {
+  margin-top: 2px;
+}
+.repo-name {
+  grid-column: 1 / -1;
+  margin-top: -2px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.add-repo {
+  align-self: flex-start;
+  font-size: 12.5px;
+}
+.checkout + .checkout {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.checkout h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.checkout .kv {
+  margin-bottom: 10px;
+}
 .repo-state.repo-ready,
 .repo-state.repo-override {
   color: var(--ok);

@@ -43,10 +43,17 @@ func (c *Claude) Args(spec Spec) []string {
 	if spec.System != "" {
 		args = append(args, "--append-system-prompt", spec.System)
 	}
-	if spec.RepoDir != "" {
-		repo := strings.TrimRight(spec.RepoDir, "/")
-		args = append(args, "--add-dir", repo,
-			"--disallowedTools", "Write(/"+repo+"/**)", "Edit(/"+repo+"/**)")
+	if len(spec.Repos) > 0 {
+		var dirs, deny []string
+		for _, r := range spec.Repos {
+			dir := strings.TrimRight(r.Dir, "/")
+			dirs = append(dirs, dir)
+			deny = append(deny, "Write(/"+dir+"/**)", "Edit(/"+dir+"/**)")
+		}
+		args = append(args, "--add-dir")
+		args = append(args, dirs...)
+		args = append(args, "--disallowedTools")
+		args = append(args, deny...)
 	}
 	return args
 }
@@ -56,7 +63,7 @@ func (c *Claude) Run(ctx context.Context, spec Spec, emit func(api.RunOutput)) (
 	if err != nil {
 		return Result{}, err
 	}
-	p := &claudeParser{emit: emit, roots: []string{spec.RepoDir, spec.Dir}}
+	p := &claudeParser{emit: emit, roots: spec.roots()}
 	runErr := runLines(ctx, bin, c.Args(spec), spec.Dir, spec.Prompt, p.line)
 	if p.done {
 		if p.isError {
@@ -105,7 +112,7 @@ type claudeBlock struct {
 
 type claudeParser struct {
 	emit     func(api.RunOutput)
-	roots    []string
+	roots    []root
 	result   Result
 	done     bool
 	isError  bool
@@ -211,10 +218,10 @@ func (p *claudeParser) toolDetail(name string, raw json.RawMessage) string {
 	}
 	switch name {
 	case "Read", "Write", "Edit", "MultiEdit", "NotebookEdit":
-		return rel(str("file_path"), p.roots...)
+		return rel(str("file_path"), p.roots)
 	case "Grep":
 		d := fmt.Sprintf("%q", str("pattern"))
-		if path := rel(str("path"), p.roots...); path != "" {
+		if path := rel(str("path"), p.roots); path != "" {
 			d += " in " + path
 		}
 		if g := str("glob"); g != "" {
@@ -223,7 +230,7 @@ func (p *claudeParser) toolDetail(name string, raw json.RawMessage) string {
 		return d
 	case "Glob":
 		d := str("pattern")
-		if path := rel(str("path"), p.roots...); path != "" {
+		if path := rel(str("path"), p.roots); path != "" {
 			d += " in " + path
 		}
 		return d

@@ -45,7 +45,7 @@ func (c *Codex) Run(ctx context.Context, spec Spec, emit func(api.RunOutput)) (R
 	if spec.System != "" {
 		prompt = "<instructions>\n" + spec.System + "\n</instructions>\n\n" + spec.Prompt
 	}
-	p := &codexParser{emit: emit, roots: []string{spec.RepoDir, spec.Dir}}
+	p := &codexParser{emit: emit, roots: spec.roots()}
 	runErr := runLines(ctx, bin, c.Args(spec), spec.Dir, prompt, p.line)
 	if p.failure != "" {
 		return Result{Reply: p.last}, errors.New("codex: " + clip(p.failure, 500))
@@ -85,7 +85,7 @@ type codexItem struct {
 
 type codexParser struct {
 	emit      func(api.RunOutput)
-	roots     []string
+	roots     []root
 	last      string
 	failure   string
 	completed bool
@@ -106,7 +106,7 @@ func (p *codexParser) line(b []byte) {
 		}
 		switch l.Item.Type {
 		case "command_execution":
-			p.emit(api.RunOutput{Kind: "tool", Tool: "Shell", Detail: clip(relAll(unwrapShell(l.Item.Command), p.roots...), 200)})
+			p.emit(api.RunOutput{Kind: "tool", Tool: "Shell", Detail: clip(relAll(unwrapShell(l.Item.Command), p.roots), 200)})
 		case "mcp_tool_call":
 			p.emit(api.RunOutput{Kind: "tool", Tool: l.Item.Tool, Detail: l.Item.Server})
 		case "web_search":
@@ -129,7 +129,7 @@ func (p *codexParser) line(b []byte) {
 		case "file_change":
 			var paths []string
 			for _, c := range l.Item.Changes {
-				paths = append(paths, rel(c.Path, p.roots...))
+				paths = append(paths, rel(c.Path, p.roots))
 			}
 			p.emit(api.RunOutput{Kind: "tool", Tool: "Edit", Detail: strings.Join(paths, ", ")})
 		}

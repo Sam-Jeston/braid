@@ -2,9 +2,10 @@ import { useState, type FormEvent } from "react";
 import { local } from "../api";
 import { Icon, Logo } from "../icons";
 import { errorToast, loadLocal, toast, useStore } from "../store";
-import type { OutputType, Role } from "../types";
+import type { OutputType, RepoRef, Role } from "../types";
 import { Button, Field, RolePicker, Segmented } from "../ui";
 import { cx } from "../util";
+import { emptyRepo, RepoList } from "./RepoList";
 
 type Mode = "welcome" | "join" | "create";
 
@@ -196,13 +197,13 @@ function CreateForm({ onBack }: { onBack: () => void }) {
   const [email, setEmail] = useState("");
   const [roles, setRoles] = useState<Role[]>(["product"]);
   const [teamName, setTeamName] = useState("");
-  const [repo, setRepo] = useState("");
-  const [branch, setBranch] = useState("");
+  const [repos, setRepos] = useState<RepoRef[]>([emptyRepo()]);
   const [output, setOutput] = useState<OutputType>("linear");
   const [cfg, setCfg] = useState<Record<string, string>>({ epic_type: "Epic", issue_type: "Task" });
   const [scan, setScan] = useState(true);
   const [busy, setBusy] = useState(false);
   const agentReady = agents.some((a) => a.available);
+  const hasRepo = repos.some((r) => r.url.trim());
   const setC = (k: string) => (e: { target: { value: string } }) => setCfg({ ...cfg, [k]: e.target.value });
 
   async function submit(e: FormEvent) {
@@ -221,9 +222,9 @@ function CreateForm({ onBack }: { onBack: () => void }) {
         display_name: name,
         email,
         roles,
-        team: { name: teamName, repo_url: repo, default_branch: branch, output: { type: output, config } },
+        team: { name: teamName, repos, output: { type: output, config } },
       });
-      if (scan && repo && agentReady) {
+      if (scan && hasRepo && agentReady) {
         await local("POST", "/scan").catch(errorToast);
         toast("Team created. Your agent is scanning the codebase on this machine.", "success");
       } else {
@@ -266,15 +267,12 @@ function CreateForm({ onBack }: { onBack: () => void }) {
         <Field label="Team name">
           <input value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="Payments squad" />
         </Field>
-        <div className="grid-2-1">
-          <Field label="Repository" hint="Every member's app clones this with their own git access. Agents only read it.">
-            <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="github.com/acme/app or git@…" className="mono" />
-          </Field>
-          <Field label="Branch" hint="Blank = default">
-            <input value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" className="mono" />
-          </Field>
-        </div>
-        {repo && (
+        <RepoList
+          value={repos}
+          onChange={setRepos}
+          hint="Every member's app clones these with their own git access. Agents only read them. Most teams need one."
+        />
+        {hasRepo && (
           <label className={cx("check-row", !agentReady && "disabled")}>
             <input type="checkbox" checked={scan && agentReady} disabled={!agentReady} onChange={(e) => setScan(e.target.checked)} />
             Scan the codebase now to write the shared codebase brief and agent rules

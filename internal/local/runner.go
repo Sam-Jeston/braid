@@ -16,7 +16,6 @@ import (
 	"github.com/sam-jeston/braid/internal/agents"
 	"github.com/sam-jeston/braid/internal/api"
 	"github.com/sam-jeston/braid/internal/client"
-	"github.com/sam-jeston/braid/internal/repo"
 	"github.com/sam-jeston/braid/internal/workflow"
 )
 
@@ -172,8 +171,12 @@ func (c *Core) execute(ctx context.Context, s *session, lr *localRun, agent agen
 		return
 	}
 	repoInfo := c.prepareRepo(ctx, s, lr, team, out)
-	finish.CommitSHA = repoInfo.Commit
+	finish.CommitSHA = repoInfo.Revision()
 	if ctx.Err() != nil {
+		return
+	}
+	if run.Kind == api.RunKindScan && !repoInfo.Available() {
+		fail(fmt.Errorf("there's no codebase to scan on this machine: %s", repoInfo.Unavailable()))
 		return
 	}
 
@@ -182,7 +185,10 @@ func (c *Core) execute(ctx context.Context, s *session, lr *localRun, agent agen
 		fail(err)
 		return
 	}
-	spec := agents.Spec{Dir: runDir, RepoDir: repoInfo.Dir, Model: model, Stage: string(run.Stage)}
+	spec := agents.Spec{Dir: runDir, Model: model, Stage: string(run.Stage)}
+	for _, co := range repoInfo.Checkouts {
+		spec.Repos = append(spec.Repos, agents.Repo{Name: co.Name, Dir: co.Dir})
+	}
 	var allowed func(string) bool
 	initial := map[string]string{}
 	if run.Kind == api.RunKindScan {
@@ -253,42 +259,43 @@ func versionLabel(a agents.Agent, model string) string {
 }
 
 func (c *Core) prepareRepo(ctx context.Context, s *session, lr *localRun, team api.Team, out *pump) workflow.RepoInfo {
-	prof := s.profileSnapshot()
-	info := workflow.RepoInfo{URL: team.RepoURL}
-	if team.RepoURL == "" && prof.RepoOverride == "" {
+	var info workflow.RepoInfo
+	if len(team.Repos) == 0 {
 		info.Note = "the team hasn't configured a repository"
 		out.emit(api.RunOutput{Kind: "status", Text: "No repository configured; using the shared codebase brief"})
 		return info
 	}
-	out.emit(api.RunOutput{Kind: "status", Text: "Syncing codebase…"})
-	var st repo.Status
-	var err error
-	if c.activeRunsFor(team.ID) > 0 {
-		st = c.repos.Status(team.ID)
-		if !st.Available() {
-			st, err = c.repos.Sync(ctx, team.ID, team.RepoURL, team.DefaultBranch, prof.RepoOverride, false)
-		}
+	if len(team.Repos) == 1 {
+		out.emit(api.RunOutput{Kind: "status", Text: "Syncing codebase…"})
 	} else {
-		st, err = c.repos.Sync(ctx, team.ID, team.RepoURL, team.DefaultBranch, prof.RepoOverride, false)
+		out.emit(api.RunOutput{Kind: "status", Text: fmt.Sprintf("Syncing %d repositories…", len(team.Repos))})
 	}
+	// Another run on this machine may be reading the checkouts: don't move
+	// them under it, only fetch what's missing.
+	busy := c.activeRunsFor(team.ID) > 0
+	statuses := c.syncRepos(ctx, team, s.profileSnapshot(), false, busy)
 	c.mu.Lock()
 	lr.syncedRepo = true
 	c.mu.Unlock()
-	if err != nil || !st.Available() {
-		msg := st.Error
-		if msg == "" && err != nil {
-			msg = err.Error()
+	for i, st := range statuses {
+		name := team.Repos[i].Name
+		label := "Codebase"
+		if len(team.Repos) > 1 {
+			label = name
 		}
-		info.Note = "couldn't access the repository from this machine: " + firstLine(msg)
-		out.emit(api.RunOutput{Kind: "error", Text: "Codebase unavailable (" + firstLine(msg) + "); using the shared codebase brief"})
-		return info
+		if !st.Available() {
+			msg := firstLine(st.Error)
+			info.Missing = append(info.Missing, fmt.Sprintf("%s (%s)", name, msg))
+			out.emit(api.RunOutput{Kind: "error", Text: fmt.Sprintf("%s unavailable (%s); using the shared codebase brief", label, msg)})
+			continue
+		}
+		info.Checkouts = append(info.Checkouts, workflow.Checkout{Name: name, URL: st.URL, Dir: st.Dir, Commit: st.Commit})
+		ref := st.Branch
+		if st.State == "override" {
+			ref = "local checkout"
+		}
+		out.emit(api.RunOutput{Kind: "status", Text: fmt.Sprintf("%s at %s (%s)", label, shortSHA(st.Commit), ref)})
 	}
-	info.Dir, info.Commit, info.Available = st.Dir, st.Commit, true
-	label := st.Branch
-	if st.State == "override" {
-		label = "local checkout"
-	}
-	out.emit(api.RunOutput{Kind: "status", Text: fmt.Sprintf("Codebase at %s (%s)", shortSHA(st.Commit), label)})
 	return info
 }
 

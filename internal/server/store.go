@@ -12,6 +12,7 @@ import (
 
 	"github.com/sam-jeston/braid/internal/api"
 	"github.com/sam-jeston/braid/internal/authn"
+	"github.com/sam-jeston/braid/internal/workflow"
 )
 
 var migrations = []string{
@@ -176,6 +177,13 @@ var migrations = []string{
 	);
 	CREATE INDEX events_team ON events(team_id, seq);
 	CREATE INDEX events_run ON events(run_id, seq);`,
+
+	// Teams can reference several repositories. Names for existing ones are
+	// derived from their URL when the team is next read (see scanTeam).
+	`ALTER TABLE teams ADD COLUMN repos_json TEXT NOT NULL DEFAULT '[]';
+	UPDATE teams SET repos_json = json_array(json_object('name', '', 'url', repo_url, 'branch', default_branch)) WHERE repo_url != '';
+	ALTER TABLE teams DROP COLUMN repo_url;
+	ALTER TABLE teams DROP COLUMN default_branch;`,
 }
 
 func openDB(path string) (*sql.DB, error) {
@@ -332,16 +340,24 @@ func (s *Server) loadServerID(ctx context.Context) (string, error) {
 
 // --- teams ---
 
-const teamCols = `id, name, repo_url, default_branch, output_json, codebase_brief, rules, scan_commit, scanned_at, created_at`
+const teamCols = `id, name, repos_json, output_json, codebase_brief, rules, scan_commit, scanned_at, created_at`
 
 func scanTeam(r scanner) (api.Team, error) {
 	var t api.Team
-	var out string
+	var repos, out string
 	var scanned sql.NullInt64
 	var created int64
-	err := r.Scan(&t.ID, &t.Name, &t.RepoURL, &t.DefaultBranch, &out, &t.CodebaseBrief, &t.Rules, &t.ScanCommit, &scanned, &created)
+	err := r.Scan(&t.ID, &t.Name, &repos, &out, &t.CodebaseBrief, &t.Rules, &t.ScanCommit, &scanned, &created)
 	if err != nil {
 		return t, err
+	}
+	_ = json.Unmarshal([]byte(repos), &t.Repos)
+	// Fills in names for rows migrated from single-repository teams.
+	if norm, err := workflow.NormalizeRepos(t.Repos); err == nil {
+		t.Repos = norm
+	}
+	if t.Repos == nil {
+		t.Repos = []api.RepoRef{}
 	}
 	_ = json.Unmarshal([]byte(out), &t.Output)
 	if t.Output.Config == nil {

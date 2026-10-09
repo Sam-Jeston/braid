@@ -98,30 +98,35 @@ type ServerInfo struct {
 	ServerID string `json:"server_id"`
 }
 
+// RepoRef is one repository the team's agents read. Name is short, unique
+// within the team, and how agents and the UI refer to it.
+type RepoRef struct {
+	Name   string `json:"name"`
+	URL    string `json:"url"`
+	Branch string `json:"branch"` // empty = the remote's default branch
+}
+
 type Team struct {
 	ID            string       `json:"id"`
 	Name          string       `json:"name"`
-	RepoURL       string       `json:"repo_url"`
-	DefaultBranch string       `json:"default_branch"`
+	Repos         []RepoRef    `json:"repos"`
 	Output        OutputTarget `json:"output"`
 	CodebaseBrief string       `json:"codebase_brief"`
 	Rules         string       `json:"rules"`
-	ScanCommit    string       `json:"scan_commit"`
+	ScanCommit    string       `json:"scan_commit"` // same format as Run.CommitSHA
 	ScannedAt     *time.Time   `json:"scanned_at"`
 	CreatedAt     time.Time    `json:"created_at"`
 }
 
 type TeamSettings struct {
-	Name          string       `json:"name"`
-	RepoURL       string       `json:"repo_url"`
-	DefaultBranch string       `json:"default_branch"`
-	Output        OutputTarget `json:"output"`
+	Name   string       `json:"name"`
+	Repos  []RepoRef    `json:"repos"`
+	Output OutputTarget `json:"output"`
 }
 
 type TeamPatch struct {
 	Name          *string       `json:"name,omitempty"`
-	RepoURL       *string       `json:"repo_url,omitempty"`
-	DefaultBranch *string       `json:"default_branch,omitempty"`
+	Repos         *[]RepoRef    `json:"repos,omitempty"`
 	Output        *OutputTarget `json:"output,omitempty"`
 	CodebaseBrief *string       `json:"codebase_brief,omitempty"`
 	Rules         *string       `json:"rules,omitempty"`
@@ -372,7 +377,7 @@ type Run struct {
 	AgentVersion     string     `json:"agent_version"`
 	Status           RunStatus  `json:"status"`
 	TriggerMessageID string     `json:"trigger_message_id,omitempty"`
-	CommitSHA        string     `json:"commit_sha"`
+	CommitSHA        string     `json:"commit_sha"` // a SHA, or "name@sha name@sha" with several repos
 	Reply            string     `json:"reply"`
 	Error            string     `json:"error"`
 	CostUSD          float64    `json:"cost_usd"`
