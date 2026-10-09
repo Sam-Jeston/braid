@@ -1,0 +1,11 @@
+bin
+data
+frontend/node_modules
+frontend/dist
+*.db
+.git
+.env
+.env.*
+*.pem
+*.key
+secrets.json

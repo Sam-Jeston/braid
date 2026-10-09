@@ -1,0 +1,47 @@
+# Build output
+/bin/
+*.exe
+*.test
+frontend/dist/*
+!frontend/dist/.gitkeep
+frontend/*.tsbuildinfo
+# Wails CLI output, if someone uses `wails build` instead of make
+desktop/build/bin/
+frontend/wailsjs/
+
+# Dependencies
+frontend/node_modules/
+
+# Local data: dev/demo servers and BRAID_HOME dirs created via make targets
+/data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+secrets.json
+
+# Secrets and local environment (Bun auto-loads .env)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Test, coverage and profiling artifacts
+coverage.out
+*.coverprofile
+*.prof
+*.pprof
+*.log
+
+# Claude Code: personal settings/notes stay local (CLAUDE.md files are committed)
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db

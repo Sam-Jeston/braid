@@ -1,0 +1,9 @@
+{"type":"thread.started","thread_id":"01a120a2-f1eb-7f41-b63d-8f5676a1a215"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll read the file and write a one-line summary to `summary.md`.\n"}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/usr/bin/zsh -lc 'cat /work/repo/math.ts'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/usr/bin/zsh -lc 'cat /work/repo/math.ts'","aggregated_output":"export const add = (a: number, b: number) => a + b;\n","exit_code":0,"status":"completed"}}
+{"type":"item.started","item":{"id":"item_2","type":"file_change","changes":[{"path":"/work/run2/summary.md","kind":"add"}],"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"file_change","changes":[{"path":"/work/run2/summary.md","kind":"add"}],"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"done"}}
+{"type":"turn.completed","usage":{"input_tokens":45798,"cached_input_tokens":41600,"cache_write_input_tokens":0,"output_tokens":195,"reasoning_output_tokens":0}}
