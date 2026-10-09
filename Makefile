@@ -3,8 +3,10 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 # Ubuntu 24.04+ / Debian 13+ only ship webkit2gtk-4.1: make desktop WAILS_TAGS=webkit2_41
 WAILS_TAGS ?=
+# Minimum Go statement coverage enforced by `make cover` (and CI).
+COVER_MIN ?= 75
 
-.PHONY: all frontend server app desktop desktop-windows test lint dev-server dev-app demo docker clean
+.PHONY: all frontend server app desktop desktop-windows test cover dist dist-desktop-linux dist-desktop-windows dist-desktop-macos dev-server dev-app demo docker clean
 
 all: server app
 
@@ -35,7 +37,29 @@ desktop-windows: frontend
 test: frontend/node_modules
 	$(GO) vet ./...
 	$(GO) test ./...
-	cd frontend && bun run typecheck
+	cd frontend && bun run typecheck && bun test
+
+## cover: Go tests with the race detector, failing below COVER_MIN% statement coverage
+cover:
+	$(GO) test -race -coverpkg=./internal/... -coverprofile=coverage.out ./...
+	@$(GO) tool cover -func=coverage.out | awk -v min=$(COVER_MIN) '/^total:/ { sub("%", "", $$3); printf "Go statement coverage: %s%% (minimum %s%%)\n", $$3, min; if ($$3 + 0 < min) exit 1 }'
+
+## dist: release archives of braid-server and braid for every platform (CGO-free cross-compiles)
+dist: frontend
+	VERSION=$(VERSION) scripts/dist.sh
+
+## dist-desktop-*: the packaged desktop app for one platform (linux needs the gtk/webkit headers, macos runs on a Mac)
+dist-desktop-linux: desktop
+	mkdir -p dist
+	tar -C bin -czf dist/braid-desktop_$(VERSION)_linux_$(shell $(GO) env GOARCH).tar.gz braid-desktop
+
+dist-desktop-windows: desktop-windows
+	mkdir -p dist
+	cd bin && if command -v zip >/dev/null; then zip -q ../dist/braid-desktop_$(VERSION)_windows_amd64.zip Braid.exe; \
+		else python3 -m zipfile -c ../dist/braid-desktop_$(VERSION)_windows_amd64.zip Braid.exe; fi
+
+dist-desktop-macos: frontend
+	VERSION=$(VERSION) scripts/package-macos.sh
 
 ## dev-server: run a local team server on :8080 (prints a setup code on first run)
 dev-server:
@@ -53,5 +77,5 @@ docker:
 	docker build -t braid-server:$(VERSION) .
 
 clean:
-	rm -rf bin
+	rm -rf bin dist coverage.out
 	find frontend/dist -mindepth 1 ! -name .gitkeep -delete

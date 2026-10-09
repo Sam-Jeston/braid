@@ -11,12 +11,14 @@ Agentic planning pipeline for product, design and engineering. Agents (Claude Co
 ## Commands
 
 ```sh
-make test                 # go vet + go test ./... + frontend typecheck (run before finishing any change)
+make test                 # go vet + go test ./... + frontend typecheck + bun test (run before finishing any change)
+make cover                # what CI runs: Go tests with -race, failing below COVER_MIN (75%) statement coverage
 make server app           # bin/braid-server, bin/braid (builds the frontend first)
 make desktop              # native Wails app; Linux needs libgtk-3-dev + libwebkit2gtk-4.0-dev
 make desktop-windows      # cross-compile bin/Braid.exe (no CGO needed); use this to type-check desktop/
 make dev-server           # team server on 127.0.0.1:8080, prints a setup code on first run
 make demo                 # app with the offline demo agent (BRAID_FAKE_AGENT=1), no model calls
+make dist                 # cross-compiled release archives into dist/ (desktop: make dist-desktop-{linux,windows,macos})
 go test ./internal/local -run TestPipeline -race   # full two-teammate pipeline against a real server
 ```
 
@@ -46,6 +48,7 @@ go test ./internal/local -run TestPipeline -race   # full two-teammate pipeline 
 - **No secrets on the server.** Devices authenticate with Ed25519 keys. Tracker credentials live in the member's keychain (`internal/local/config.go` `Secrets`), never in `config.json` and never in a request to braid-server.
 - **Agent output is untrusted** (documents, replies, mockup HTML). Validate it on the server, sanitize it in the UI.
 - **User-facing errors** (`errf` messages on the server, errors returned from the core) are shown verbatim in UI toasts. Write them as plain sentences that tell the user what to do.
+- **CI** (`.github/workflows/`, documented in `docs/RELEASING.md`) runs Go tests on Linux, macOS and Windows and enforces the coverage floor. New behaviour needs tests, so don't lower `COVER_MIN` to get a change through. Keep tests portable: use `filepath`, not hard-coded `/`, and put Unix-only tests behind `//go:build !windows`.
 - **Testing:** use the fake agent (`BRAID_FAKE_AGENT=1`, `BRAID_FAKE_DELAY_MS`) and `BRAID_SECRETS=file`. Extend `internal/local/e2e_test.go` when you change workflow behaviour, and keep the fake agent's outputs valid for every stage.
 - **Embedding:** `frontend/dist/.gitkeep` must exist so `go:embed all:dist` compiles on a fresh clone. Don't delete it; `build.ts` and `make clean` preserve it.
 - Match the surrounding code's style and comment density. Go code is `gofmt`ed. The frontend has no formatter config yet, so follow the existing formatting (2-space indent, double quotes, trailing commas, wide lines).

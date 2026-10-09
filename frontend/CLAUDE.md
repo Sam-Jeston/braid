@@ -9,6 +9,7 @@ bun install
 bun run build        # → dist/ (minified)
 bun run dev          # rebuild on change; pair with `go run ./cmd/braid --ui-dir frontend/dist`
 bun run typecheck    # tsc --noEmit; must pass
+bun test             # unit tests (src/*.test.ts); DOM from jsdom via test/setup.ts
 ```
 
 Use Bun for tooling. There is no Vite and no `Bun.serve`: the Go core serves the UI.
@@ -26,6 +27,7 @@ Use Bun for tooling. There is no Vite and no `Bun.serve`: the Go core serves the
 ## Security (agent output and teammates' messages are untrusted)
 
 - Render markdown only through `<Markdown>` (`marked` → DOMPurify). No other `dangerouslySetInnerHTML`.
+- `markdown.test.ts` pins the sanitizer's behaviour against known XSS vectors. Keep it passing, and test under jsdom: happy-dom mishandles DOMPurify and let `javascript:` links through, while real browsers and jsdom strip them.
 - Mockup HTML is shown only in `<iframe sandbox="" srcDoc=...>`. Don't add `allow-scripts` or `allow-same-origin`.
 - `index.html` has a strict CSP: no inline scripts and no external origins. Keep it that way. External links open via `openExternal` (the core asks the OS), not by navigating the webview.
 

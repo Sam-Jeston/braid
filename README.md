@@ -1,5 +1,7 @@
 # Braid
 
+[![CI](https://github.com/Sam-Jeston/braid/actions/workflows/ci.yml/badge.svg)](https://github.com/Sam-Jeston/braid/actions/workflows/ci.yml)
+
 **Three strands, one plan.** Braid gives product, design and engineering one shared thread for deciding what to build. The agents that do the work run on each person's own machine, and everyone sees everything as it happens.
 
 - **Sparring.** Product posts an idea. An agent that has read the real codebase challenges it: viability, scope cuts, risks, and open questions. It maintains a living `brief.md`.
@@ -30,7 +32,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the protocol, data model an
 
 ## Quick start
 
-Requirements: Go 1.27+, Bun 1.3+, git, and at least one of [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Codex](https://github.com/openai/codex) on each teammate's machine.
+Prebuilt server, browser-mode and desktop builds for Linux, macOS and Windows are attached to each [release](https://github.com/Sam-Jeston/braid/releases), and the server image is at `ghcr.io/sam-jeston/braid-server`. Building from source needs Go 1.27+, Bun 1.3+ and git. Either way, each teammate needs [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Codex](https://github.com/openai/codex) installed.
 
 ### 1. Run a team server
 
@@ -85,7 +87,9 @@ make demo              # terminal 2
 ## Development
 
 ```sh
-make test              # go vet, go test (incl. a two-teammate end-to-end pipeline test), tsc
+make test              # go vet, go test (incl. two-teammate end-to-end tests), tsc, bun test
+make cover             # Go tests with -race, failing below 75% statement coverage (what CI runs)
+make dist              # release archives of braid-server and braid for every platform
 make dev-server        # team server on :8080
 make dev-app           # rebuilds the UI on change and serves it from disk
 ```
@@ -103,6 +107,8 @@ make dev-app           # rebuilds the UI on change and serves it from disk
 | `internal/repo` | managed read-only clones |
 | `frontend/` | React UI, built with Bun and embedded via `go:embed` |
 
+CI runs on every push and pull request; tagging `v*` publishes a release. See [docs/RELEASING.md](docs/RELEASING.md) for what's built and the signing setup.
+
 Useful environment variables: `BRAID_HOME` (app data dir), `BRAID_SECRETS=file` (skip the OS keychain), `BRAID_KEEP_RUNS=1` (keep agent scratch dirs), `BRAID_MAX_RUN_MINUTES`, `BRAID_FAKE_AGENT=1`.
 
 ## Status & roadmap
@@ -112,5 +118,5 @@ This is a working v1. Known gaps and natural next steps:
 - Identity is per team (name + device key). No SSO yet, and one person on several devices joins with several invites.
 - One server process. SQLite with a single writer is plenty for teams, but it isn't horizontally scalable.
 - Linear and Jira exporters are tested against mocked APIs, not live workspaces.
-- The Linux desktop build isn't packaged (no `.deb`/AppImage). macOS builds need signing/notarization.
+- The Linux desktop build isn't packaged (no `.deb`/AppImage). macOS builds are only notarized once signing secrets are configured ([docs/RELEASING.md](docs/RELEASING.md)).
 - More agents (Gemini CLI, Aider) only need an adapter in `internal/agents`.

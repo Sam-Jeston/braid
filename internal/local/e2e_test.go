@@ -161,6 +161,14 @@ func TestPipeline(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(res.Folder, "README.md")); err != nil {
 		t.Fatal(err)
 	}
+	// Anyone can also save the plan as Markdown on their own machine.
+	folder, err := dev.SaveMarkdown(ctx, th)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(folder, "README.md")); err != nil || !strings.Contains(string(b), "#") {
+		t.Fatalf("saved markdown: %v", err)
+	}
 	final := remote[api.ThreadDetail](t, dev, "GET", "/v1/threads/"+th, nil)
 	if final.Thread.Status != api.ThreadCompleted {
 		t.Fatalf("thread not completed: %s", final.Thread.Status)
@@ -320,6 +328,100 @@ func TestMultipleRepos(t *testing.T) {
 	}
 	if st := c.State(); st.Repos[0].State != "ready" || st.Repos[0].Dir == localWeb {
 		t.Fatalf("web should be a managed clone again: %+v", st.Repos[0])
+	}
+}
+
+func TestCancelPresenceRevokeAndLeave(t *testing.T) {
+	t.Setenv("BRAID_FAKE_AGENT", "1")
+	t.Setenv("BRAID_FAKE_DELAY_MS", "400") // slow enough to stop mid-run
+	t.Setenv("BRAID_SECRETS", "file")
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv, _ := server.New(server.Config{DBPath: filepath.Join(t.TempDir(), "b.db"), Logger: log})
+	defer srv.Close()
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+	code, _ := srv.CreateSetupCode(ctx, time.Hour)
+
+	priya := newCore(t, log)
+	defer priya.Shutdown()
+	if _, err := priya.CreateTeam(ctx, CreateTeamInput{
+		JoinInput: JoinInput{ServerURL: hs.URL, Code: code, DisplayName: "Priya"},
+		Roles:     api.AllRoles,
+		Team:      api.TeamSettings{Name: "Acme", Output: api.OutputTarget{Type: "markdown"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	priya.UpdateSettings(SettingsPatch{Agent: ptr("fake")})
+	inv := remote[api.CreateInviteResponse](t, priya, "POST", "/v1/invites", api.CreateInviteRequest{Roles: []api.Role{api.RoleDesign}})
+	dev := newCore(t, log)
+	defer dev.Shutdown()
+	if _, err := dev.Join(ctx, JoinInput{ServerURL: hs.URL, Code: inv.Code, DisplayName: "Dev"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "both connected", func() bool {
+		return priya.State().Connection == "connected" && dev.State().Connection == "connected"
+	})
+	th := remote[api.ThreadDetail](t, priya, "POST", "/v1/threads", api.CreateThreadRequest{Title: "Idea", Body: "An idea"}).Thread.ID
+
+	// Teammates see who is looking at a thread.
+	events, unsub := dev.Bus().Subscribe()
+	defer unsub()
+	priya.SetPresence(th)
+	me := priya.State().Me.ID
+	deadline := time.After(5 * time.Second)
+	for seen := false; !seen; {
+		select {
+		case b := <-events:
+			var ev api.Event
+			json.Unmarshal(b, &ev)
+			var p []api.PresenceEntry
+			if ev.Type == api.EvPresence && json.Unmarshal(ev.Data, &p) == nil {
+				for _, e := range p {
+					seen = seen || (e.MemberID == me && e.ThreadID == th)
+				}
+			}
+		case <-deadline:
+			t.Fatal("dev never saw priya's presence")
+		}
+	}
+
+	runStatus := func(id string) api.RunStatus { return remote[api.Run](t, priya, "GET", "/v1/runs/"+id, nil).Status }
+
+	// A teammate's stop request reaches the machine running the agent.
+	run, err := priya.StartRun(ctx, StartRunInput{ThreadID: th, Stage: api.StageSparring})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dev.CancelRun(ctx, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "remote cancel", func() bool { return runStatus(run.ID) == api.RunCancelled })
+
+	// And the owner can stop it directly.
+	run, err = priya.StartRun(ctx, StartRunInput{ThreadID: th, Stage: api.StageSparring})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := priya.CancelRun(ctx, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "local cancel", func() bool { return runStatus(run.ID) == api.RunCancelled })
+	if d := remote[api.ThreadDetail](t, priya, "GET", "/v1/threads/"+th, nil); len(d.Artifacts) != 0 || d.Thread.StageState(api.StageSparring).ActiveRunID != "" {
+		t.Errorf("cancelled runs left documents or a stage lock: %+v", d.Thread.Stages[0])
+	}
+
+	// Removing a member cuts off their device, and their app says so.
+	remote[struct{}](t, priya, "DELETE", "/v1/members/"+dev.State().Me.ID, nil)
+	waitFor(t, "dev revoked", func() bool { return dev.State().Connection == "revoked" })
+
+	// Leaving forgets the team on this machine and revokes the device.
+	prof := priya.State().Active
+	if err := priya.Leave(ctx, prof.ID); err != nil {
+		t.Fatal(err)
+	}
+	if st := priya.State(); st.Active != nil || len(st.Profiles) != 0 {
+		t.Fatalf("still a member locally: %+v", st.Profiles)
 	}
 }
 

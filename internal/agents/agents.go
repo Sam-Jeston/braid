@@ -251,9 +251,12 @@ func lastLines(s string, n int) string {
 }
 
 // rel shortens absolute paths for display; a root itself becomes "".
+// rel labels an absolute path for run activity. Paths are compared with
+// forward slashes so Windows paths shorten too.
 func rel(p string, roots []root) string {
+	p = filepath.ToSlash(p)
 	for _, r := range roots {
-		dir := strings.TrimRight(r.dir, "/")
+		dir := strings.TrimRight(filepath.ToSlash(r.dir), "/")
 		if dir == "" {
 			continue
 		}
@@ -273,12 +276,17 @@ func rel(p string, roots []root) string {
 // relAll shortens every occurrence of the roots inside a command line.
 func relAll(s string, roots []root) string {
 	for _, r := range roots {
-		if dir := strings.TrimRight(r.dir, "/"); dir != "" {
-			prefix := ""
-			if r.label != "" {
-				prefix = r.label + "/"
-			}
-			s = strings.ReplaceAll(s, dir+"/", prefix)
+		dir := strings.TrimRight(filepath.ToSlash(r.dir), "/")
+		if dir == "" {
+			continue
+		}
+		prefix := ""
+		if r.label != "" {
+			prefix = r.label + "/"
+		}
+		s = strings.ReplaceAll(s, dir+"/", prefix)
+		if native := filepath.FromSlash(dir); native != dir {
+			s = strings.ReplaceAll(s, native+string(filepath.Separator), prefix)
 		}
 	}
 	return s

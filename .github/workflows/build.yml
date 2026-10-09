@@ -1,0 +1,171 @@
+name: Build
+
+# Builds every distributable on pushes to main (as workflow artifacts) and,
+# for v* tags, publishes them as a GitHub release plus a server image on GHCR.
+# See docs/RELEASING.md for signing and the secrets this uses.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cli:
+    name: braid-server + braid (all platforms)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # tags, for the version
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: frontend/package.json
+      - run: make dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cli
+          path: dist/*
+          if-no-files-found: error
+
+  desktop-linux:
+    name: Desktop (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: frontend/package.json
+      - name: Install GTK and WebKitGTK headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+      # Ubuntu 24.04 ships webkit2gtk-4.1 only; the binary needs libwebkit2gtk-4.1 at runtime (Ubuntu 22.04+, Debian 12+, Fedora).
+      - run: make dist-desktop-linux WAILS_TAGS=webkit2_41
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-linux
+          path: dist/*
+          if-no-files-found: error
+
+  desktop-windows:
+    name: Desktop (Windows)
+    runs-on: ubuntu-latest # WebView2 needs no CGO, so this cross-compiles
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: frontend/package.json
+      - run: make dist-desktop-windows
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-windows
+          path: dist/*
+          if-no-files-found: error
+
+  desktop-macos:
+    name: Desktop (macOS)
+    runs-on: macos-latest
+    env:
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: frontend/package.json
+      - name: Import the Developer ID certificate
+        if: env.MACOS_CERTIFICATE_P12 != ''
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -hex 16)
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+      - run: make dist-desktop-macos
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-macos
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [cli, desktop-linux, desktop-windows, desktop-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - run: cd dist && sha256sum * > SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=(--verify-tag --generate-notes --title "$GITHUB_REF_NAME")
+          case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" "${flags[@]}"
+
+  server-image:
+    name: Server image (GHCR)
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/braid-server
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          build-args: VERSION=${{ github.ref_name }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

@@ -1,0 +1,2 @@
+# Keep LF everywhere so scripts, fixtures and gofmt behave the same on Windows checkouts.
+* text=auto eol=lf

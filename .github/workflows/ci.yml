@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: frontend/package.json
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test --coverage
+      - run: bun run build
+
+  go-linux:
+    name: Go (Linux, race + coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "Run gofmt on:"; echo "$unformatted"; exit 1; fi
+      - run: go vet ./...
+      - name: Test with coverage gate
+        run: make cover
+      - name: Coverage summary
+        if: always()
+        run: |
+          if [ -f coverage.out ]; then
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            go tool cover -func=coverage.out | sort -k3 -n | head -25 >> "$GITHUB_STEP_SUMMARY"
+            go tool cover -func=coverage.out | tail -1 >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: ignore
+          retention-days: 14
+      # The Windows desktop app cross-compiles without CGO, so it's a cheap check that desktop/ builds.
+      - name: Desktop app compiles (Windows)
+        run: GOOS=windows GOARCH=amd64 go build -tags desktop,production -o /dev/null ./desktop
+
+  go:
+    name: Go (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
