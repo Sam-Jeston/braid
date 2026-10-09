@@ -3,6 +3,7 @@
 
 let base = "";
 let token = "";
+let desktop = false;
 
 export class ApiError extends Error {
   constructor(
@@ -45,6 +46,7 @@ export async function bootstrap(): Promise<void> {
     const j = await r.json();
     base = j.api;
     token = j.token;
+    desktop = true;
     return;
   }
   throw new Error("This window isn't connected to a Braid core. Start it with `braid` or open the desktop app.");
@@ -117,10 +119,15 @@ export function connectEvents(onEvent: (ev: any) => void, onStatus: (connected: 
   };
 }
 
-/** Opens a URL in the system browser, or an exported folder in the file manager. */
+/**
+ * Opens a URL in the system browser, or an exported folder in the file manager.
+ * In browser mode links open in a new tab right away, inside the click, so
+ * popup blockers allow them. The desktop webview has no tabs, so it asks the core.
+ */
 export function openExternal(target: string, onError?: (e: unknown) => void) {
-  local("POST", "/open", { target }).catch((e) => {
-    if (/^https?:\/\//.test(target)) window.open(target, "_blank", "noopener");
-    else onError?.(e);
-  });
+  if (!desktop && /^https?:\/\//.test(target)) {
+    window.open(target, "_blank", "noopener");
+    return;
+  }
+  local("POST", "/open", { target }).catch((e) => onError?.(e));
 }

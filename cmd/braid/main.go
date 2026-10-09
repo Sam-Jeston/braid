@@ -89,7 +89,7 @@ func main() {
 
 	fmt.Fprintf(os.Stderr, "\n  Braid is running. Open this link (it contains a session token):\n\n    %s\n\n  Data: %s\n\n", url, core.Home())
 	if !*noOpen {
-		openBrowser(url)
+		go openBrowser(log, url)
 	}
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("serve", "err", err)
@@ -105,8 +105,8 @@ func randomToken() string {
 	return hex.EncodeToString(b)
 }
 
-func openBrowser(url string) {
-	if cmd, err := local.OpenCommand(url); err == nil {
-		_ = cmd.Start()
+func openBrowser(log *slog.Logger, url string) {
+	if err := local.OpenTarget(url); err != nil {
+		log.Warn("couldn't open a browser; open the URL above yourself", "err", err)
 	}
 }

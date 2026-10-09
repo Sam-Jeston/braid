@@ -324,7 +324,7 @@ function PlanView({ detail }: { detail: ThreadDetail }) {
             {plan.tickets.length} tickets · {points} points
           </span>
           {exp && keyFor("epic") && (
-            <button className="link-btn" onClick={() => openExternal(keyFor("epic")!.url)}>
+            <button className="link-btn" onClick={() => openExternal(keyFor("epic")!.url, errorToast)}>
               {keyFor("epic")!.key} <Icon name="external" size={12} />
             </button>
           )}
@@ -370,7 +370,7 @@ function PlanView({ detail }: { detail: ThreadDetail }) {
                     </div>
                   )}
                   {created && (
-                    <Button size="sm" variant="ghost" icon="external" onClick={() => openExternal(created.url)}>
+                    <Button size="sm" variant="ghost" icon="external" onClick={() => openExternal(created.url, errorToast)}>
                       Open {created.key}
                     </Button>
                   )}
@@ -510,7 +510,7 @@ function PlanActions({ detail }: { detail: ThreadDetail }) {
         </span>
         <span className="grow" />
         {exp.items[0] && (
-          <Button size="sm" variant="ghost" icon="external" onClick={() => openExternal(exp.items[0].url)}>
+          <Button size="sm" variant="ghost" icon="external" onClick={() => openExternal(exp.items[0].url, errorToast)}>
             Open
           </Button>
         )}

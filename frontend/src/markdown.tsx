@@ -2,6 +2,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { memo, useMemo, type MouseEvent } from "react";
 import { openExternal } from "./api";
+import { errorToast } from "./store";
 import { cx } from "./util";
 
 marked.setOptions({ gfm: true, breaks: false });
@@ -23,7 +24,7 @@ function onClick(e: MouseEvent<HTMLDivElement>) {
   if (!a) return;
   const href = a.getAttribute("href") || "";
   e.preventDefault();
-  if (/^https?:\/\//.test(href)) openExternal(href);
+  if (/^https?:\/\//.test(href)) openExternal(href, errorToast);
 }
 
 export const Markdown = memo(function Markdown({ text, className }: { text: string; className?: string }) {
