@@ -74,7 +74,7 @@ export function Sidebar() {
         {active.map((t) => (
           <ThreadItem key={t.id} t={t} on={selected === t.id} viewers={viewers(t) as any[]} />
         ))}
-        {done.length > 0 && <div className="nav-section">Shipped · {done.length}</div>}
+        {done.length > 0 && <div className="nav-section">Planned · {done.length}</div>}
         {done.map((t) => (
           <ThreadItem key={t.id} t={t} on={selected === t.id} viewers={viewers(t) as any[]} />
         ))}
@@ -119,7 +119,7 @@ function ThreadItem({ t, on, viewers }: { t: Thread; on: boolean; viewers: any[]
             );
           })}
         </span>
-        <span className="muted small">{t.status === "completed" ? "shipped" : STAGES[t.current_stage].title}</span>
+        <span className="muted small">{t.status === "completed" ? "planned" : STAGES[t.current_stage].title}</span>
         <span className="viewers">
           {viewers.slice(0, 3).map((m) => (
             <Avatar key={m.id} member={m} size={16} />

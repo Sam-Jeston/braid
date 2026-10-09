@@ -60,7 +60,7 @@ function ThreadHeader({ t }: { t: Thread }) {
         )}
         <span className="muted small">
           Started by {memberName(l, t.created_by)} · {timeAgo(t.created_at)}
-          {t.status === "completed" && " · Shipped"}
+          {t.status === "completed" && " · Planned"}
         </span>
       </div>
       <div className="viewers-lg">

@@ -122,7 +122,7 @@ export function Home() {
                     <i key={s} className={cx("pip", `pip-${stageState(t, s).status}`, `pip-${s}`, stageState(t, s).active_run_id && "pip-running")} />
                   ))}
                 </span>
-                <span className="muted small">{t.status === "completed" ? "shipped" : STAGES[t.current_stage].title}</span>
+                <span className="muted small">{t.status === "completed" ? "planned" : STAGES[t.current_stage].title}</span>
                 <span className="muted small">{timeAgo(t.updated_at)}</span>
               </button>
             ))}
