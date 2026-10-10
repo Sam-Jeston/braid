@@ -4,7 +4,7 @@ import { Icon, Logo } from "../icons";
 import { errorToast, go, setState, useStore } from "../store";
 import type { Thread } from "../types";
 import { Avatar, RoleChip } from "../ui";
-import { cx, STAGE_ORDER, STAGES, stageState, timeAgo } from "../util";
+import { cx, deliveryOf, phaseLabel, STAGE_ORDER, STAGES, stageState, timeAgo } from "../util";
 
 export function Sidebar() {
   const l = useStore((s) => s.local)!;
@@ -13,7 +13,10 @@ export function Sidebar() {
   const presence = useStore((s) => s.presence);
   const [switcher, setSwitcher] = useState(false);
   const active = threads.filter((t) => t.status === "active");
-  const done = threads.filter((t) => t.status === "completed");
+  const published = threads.filter((t) => t.status === "completed");
+  const planned = published.filter((t) => deliveryOf(t) === "planned");
+  const built = published.filter((t) => deliveryOf(t) === "built");
+  const cancelled = published.filter((t) => deliveryOf(t) === "cancelled");
   const selected = route.view === "thread" ? route.id : null;
 
   const viewers = (t: Thread) =>
@@ -74,10 +77,12 @@ export function Sidebar() {
         {active.map((t) => (
           <ThreadItem key={t.id} t={t} on={selected === t.id} viewers={viewers(t) as any[]} />
         ))}
-        {done.length > 0 && <div className="nav-section">Planned · {done.length}</div>}
-        {done.map((t) => (
+        {planned.length > 0 && <div className="nav-section">Planned · {planned.length}</div>}
+        {planned.map((t) => (
           <ThreadItem key={t.id} t={t} on={selected === t.id} viewers={viewers(t) as any[]} />
         ))}
+        <ClosedSection title="Built" threads={built} selected={selected} viewers={viewers} />
+        <ClosedSection title="Cancelled" threads={cancelled} selected={selected} viewers={viewers} />
       </nav>
 
       <div className="me-bar">
@@ -95,6 +100,21 @@ export function Sidebar() {
         </button>
       </div>
     </aside>
+  );
+}
+
+/** Built and cancelled threads pile up over time, so their sections start collapsed. */
+function ClosedSection({ title, threads, selected, viewers }: { title: string; threads: Thread[]; selected: string | null; viewers: (t: Thread) => unknown[] }) {
+  const [open, setOpen] = useState<boolean | null>(null);
+  if (threads.length === 0) return null;
+  const shown = open ?? threads.some((t) => t.id === selected);
+  return (
+    <>
+      <button className="nav-section nav-toggle" onClick={() => setOpen(!shown)} aria-expanded={shown}>
+        <Icon name={shown ? "chevronDown" : "chevronRight"} size={11} /> {title} · {threads.length}
+      </button>
+      {shown && threads.map((t) => <ThreadItem key={t.id} t={t} on={selected === t.id} viewers={viewers(t) as any[]} />)}
+    </>
   );
 }
 
@@ -119,7 +139,7 @@ function ThreadItem({ t, on, viewers }: { t: Thread; on: boolean; viewers: any[]
             );
           })}
         </span>
-        <span className="muted small">{t.status === "completed" ? "planned" : STAGES[t.current_stage].title}</span>
+        <span className="muted small">{phaseLabel(t)}</span>
         <span className="viewers">
           {viewers.slice(0, 3).map((m) => (
             <Avatar key={m.id} member={m} size={16} />

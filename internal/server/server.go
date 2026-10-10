@@ -151,6 +151,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/threads/{id}/artifacts", s.authed(s.handleSaveArtifact))
 	m.HandleFunc("GET /v1/threads/{id}/artifacts/history", s.authed(s.handleArtifactHistory))
 	m.HandleFunc("POST /v1/threads/{id}/exports", s.authed(s.handleCreateExport))
+	m.HandleFunc("POST /v1/threads/{id}/delivery", s.authed(s.handleDelivery))
+	m.HandleFunc("GET /v1/exports/planned", s.authed(s.handlePlannedExports))
 
 	// Runs
 	m.HandleFunc("GET /v1/runs", s.authed(s.handleListRuns))

@@ -67,7 +67,10 @@ func (c *Core) Publish(ctx context.Context, threadID string) (PublishResult, err
 	switch team.Output.Type {
 	case api.OutputLinear:
 		key, _ := c.secrets.Get(secretLinear)
-		l := &export.Linear{APIKey: key, TeamKey: team.Output.Config["team_key"]}
+		c.mu.Lock()
+		endpoint := c.linearEndpoint
+		c.mu.Unlock()
+		l := &export.Linear{APIKey: key, TeamKey: team.Output.Config["team_key"], Endpoint: endpoint}
 		items, err = l.Export(ctx, in)
 	case api.OutputJira:
 		token, _ := c.secrets.Get(secretJira)

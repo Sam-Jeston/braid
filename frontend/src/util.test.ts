@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { LocalState, Member, RepoStatus, Thread } from "./types";
-import { checkoutLabel, duration, fileLabel, initials, memberName, possessive, shortRevision, stageState, timeAgo } from "./util";
+import { checkoutLabel, deliveryOf, duration, fileLabel, initials, memberName, phaseLabel, possessive, shortRevision, stageState, timeAgo } from "./util";
 
 test("shortRevision shortens one SHA or several name@sha pairs", () => {
   expect(shortRevision("0123456789abcdef")).toBe("01234567");
@@ -45,4 +45,12 @@ test("stageState treats unknown stages as locked", () => {
   expect(stageState(t, "sparring").status).toBe("open");
   expect(stageState(t, "plan").status).toBe("locked");
   expect(fileLabel("mockups/compact_list-view.html")).toBe("compact list view");
+});
+
+test("thread lists show the stage while active, then what became of the plan", () => {
+  const t = (over: Partial<Thread>) => ({ status: "active", current_stage: "design", stages: [], ...over }) as Thread;
+  expect(phaseLabel(t({}))).toBe("Design");
+  expect(phaseLabel(t({ status: "completed" }))).toBe("planned"); // published before delivery tracking
+  expect(phaseLabel(t({ status: "completed", delivery: "built" }))).toBe("built");
+  expect(deliveryOf(t({ status: "completed", delivery: "cancelled" }))).toBe("cancelled");
 });

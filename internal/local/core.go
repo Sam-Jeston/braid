@@ -40,12 +40,14 @@ type Core struct {
 	repos    *repo.Manager
 	hostname string
 
-	mu        sync.Mutex
-	cfg       *Config
-	sess      *session
-	runs      map[string]*localRun
-	agentInfo []agents.Info
-	wg        sync.WaitGroup
+	mu             sync.Mutex
+	cfg            *Config
+	sess           *session
+	runs           map[string]*localRun
+	agentInfo      []agents.Info
+	deliveryTiming deliveryTiming
+	linearEndpoint string // empty: the real Linear API (tests use a fake)
+	wg             sync.WaitGroup
 }
 
 func DefaultHome() string {
@@ -78,7 +80,7 @@ func New(opts Options) (*Core, error) {
 	host, _ := os.Hostname()
 	c := &Core{
 		opts: opts, log: opts.Logger, home: opts.Home, cfgPath: cfgPath, cfg: cfg,
-		bus: NewBus(), runs: map[string]*localRun{}, hostname: host,
+		bus: NewBus(), runs: map[string]*localRun{}, hostname: host, deliveryTiming: defaultDeliveryTiming,
 	}
 	c.secrets = openSecrets(opts.Home, cfg.SecretBackend)
 	if cfg.SecretBackend == "" {

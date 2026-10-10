@@ -9,17 +9,21 @@ package api
 // Protocol is the client/server API version this build speaks. Bump it on
 // any change to internal/api, the server's routes or event payloads that the
 // other side could depend on.
-const Protocol = 1
+//
+//	1: versioning introduced
+//	2: delivery tracking (Thread.Delivery, /v1/exports/planned, /v1/threads/{id}/delivery)
+const Protocol = 2
 
 // MinClientProtocol is the oldest app this server still works with. Apps
 // built before versioning existed count as protocol 0. Raise it (to the new
 // Protocol) when the server stops supporting something older apps rely on.
+// Still 0: apps from before delivery tracking ignore it and keep working.
 const MinClientProtocol = 0
 
 // MinServerProtocol is the oldest server this app works with. Raise it (to
 // the new Protocol) when the app starts relying on something older servers
-// don't have.
-const MinServerProtocol = 0
+// don't have. 2: the app reads and reports delivery.
+const MinServerProtocol = 2
 
 // ProtocolHeader carries the app's Protocol on every request to the server.
 const ProtocolHeader = "Braid-Protocol"

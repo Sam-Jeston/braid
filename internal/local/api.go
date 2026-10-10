@@ -58,6 +58,7 @@ func (c *Core) NewAPI(token string, static fs.FS) *API {
 	m.HandleFunc("POST /local/repo/sync", a.auth(a.syncRepo))
 	m.HandleFunc("POST /local/threads/{id}/publish", a.auth(a.publish))
 	m.HandleFunc("POST /local/threads/{id}/save-markdown", a.auth(a.saveMarkdown))
+	m.HandleFunc("POST /local/threads/{id}/check-delivery", a.auth(a.checkDelivery))
 	m.HandleFunc("POST /local/open", a.auth(a.open))
 	m.HandleFunc("POST /local/presence", a.auth(a.presence))
 	m.HandleFunc("GET /local/ws", a.ws)
@@ -267,6 +268,19 @@ func (a *API) saveMarkdown(w http.ResponseWriter, r *http.Request) (any, error) 
 		return nil, err
 	}
 	return map[string]string{"folder": folder}, nil
+}
+
+func (a *API) checkDelivery(w http.ResponseWriter, r *http.Request) (any, error) {
+	ctx, cancel := ctxTimeout(r, time.Minute)
+	defer cancel()
+	res, err := a.core.CheckDeliveries(ctx, r.PathValue("id"))
+	if err != nil {
+		return nil, err
+	}
+	if res.Checked == 0 && res.Skipped > 0 {
+		return nil, errors.New("this device can't read the tracker: add your credentials in Settings → This device")
+	}
+	return res, nil
 }
 
 func (a *API) open(w http.ResponseWriter, r *http.Request) (any, error) {

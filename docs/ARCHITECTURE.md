@@ -54,7 +54,7 @@ The check runs on every (re)connect and on the onboarding probe. While incompati
 
 ```
             approve (product)        approve (design)          approve (eng)
-Sparring ───────────────────► Design ───────────────► Technical ──────────────► Plan ── publish ──► completed
+Sparring ───────────────────► Design ───────────────► Technical ──────────────► Plan ── publish ──► completed (planned → built | cancelled)
   open                         locked→open             locked→open               open
   ▲                                                                                │
   └──── reopen (owner) re-locks every later stage; their docs are kept ────────────┘
@@ -120,7 +120,7 @@ Every state change is written to `events` in the same transaction as the change,
 
 ## Data model (SQLite)
 
-`teams` (repositories and output target as JSON), `members` (roles JSON, admin flag), `devices` (public keys), `sessions` (hashed tokens), `invites` / `setup_codes` (hashed), `threads`, `thread_stages` (status, approval, design selection, active run), `messages` (human/agent/system), `runs`, `artifacts` (versioned), `exports`, `events`.
+`teams` (repositories and output target as JSON), `members` (roles JSON, admin flag), `devices` (public keys), `sessions` (hashed tokens), `invites` / `setup_codes` (hashed), `threads` (including delivery), `thread_stages` (status, approval, design selection, active run), `messages` (human/agent/system), `runs`, `artifacts` (versioned), `exports`, `events`.
 
 ## Publishing
 
@@ -130,4 +130,21 @@ Every state change is written to `events` in the same transaction as the change,
 - **Jira Cloud** (REST v3): an epic, then child issues with `parent` (retried without it for projects that don't allow it), descriptions converted from Markdown to ADF, and `Blocks` links.
 - **Markdown**: a folder with `README.md`, `plan.json`, one file per ticket, and the approved stage docs.
 
-The export result (keys and URLs) is recorded on the server, which completes the thread.
+The export result (keys and URLs) is recorded on the server, which completes the thread and marks its **delivery** `planned`.
+
+### Delivery: planned → built | cancelled
+
+```
+member's app, while connected (5s after connecting, then every 15 min)
+  GET /v1/exports/planned                 ← latest export of each planned, unarchived thread
+  read issue states with this member's own credentials
+    Linear: issues(filter: {team.key, number in […]}, includeArchived)
+    Jira:   POST /rest/api/3/issue/bulkfetch (status, resolution), only on the team's https site
+  POST /v1/threads/{id}/delivery {delivery, tracker, items:[{key, state}]}
+    → server stores the issue states (export.updated) and, if it changed, the delivery (thread.updated)
+```
+
+- **Rules** (`export.Outcome`): the plan is *built* when the epic is done, or every ticket is closed and at least one was done; *cancelled* when the epic is cancelled, or every ticket was. Issues the tracker no longer returns are ignored. Jira has no cancelled category, so a done issue whose status or resolution reads like "Won't Do", "Duplicate" or "Cancelled" counts as cancelled.
+- **Tracker reports only move a plan on from `planned`.** The server rejects them (409) otherwise, so an engineer's decision is never overridden. Concurrent reports from several teammates resolve the same way.
+- **Engineers** can set any delivery by hand (`POST …/delivery` without `tracker`). That's the only way to close a Markdown plan, and moving a plan back to `planned` hands it back to the tracker check.
+- Only members with tracker credentials can check. Everyone sees the result, and the UI also offers a **Check now** button that runs the same check for one plan.

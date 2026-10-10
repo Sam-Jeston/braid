@@ -8,6 +8,7 @@
 - **Design.** The agent proposes 2–3 distinct HTML mockups built from the product's existing UI patterns and tokens. A designer picks a direction and iterates.
 - **Technical.** The agent turns the brief and the chosen mockup into a code-grounded build plan with a work breakdown.
 - **Plan.** Once each stage's owner approves, the agent produces tickets and one click publishes them to **Linear**, **Jira** or **Markdown**.
+- **Built.** A published plan stays *planned* until the work ships. Braid watches the Linear or Jira issues from teammates' apps and marks the plan *built* or *cancelled* when they close. Engineers can also mark it by hand, which is how Markdown plans are closed.
 
 Every stage keeps a conversation where anyone on the team can weigh in, and anyone can ask the agent to respond. Only the owning role can approve a stage, and reopening a stage re-locks everything downstream.
 
@@ -117,6 +118,6 @@ This is a working v1. Known gaps and natural next steps:
 
 - Identity is per team (name + device key). No SSO yet, and one person on several devices joins with several invites.
 - One server process. SQLite with a single writer is plenty for teams, but it isn't horizontally scalable.
-- Linear and Jira exporters are tested against mocked APIs, not live workspaces.
+- Linear and Jira exporters and status checks are tested against mocked APIs, not live workspaces.
 - The Linux desktop build isn't packaged (no `.deb`/AppImage). macOS builds are only notarized once signing secrets are configured ([docs/RELEASING.md](docs/RELEASING.md)).
 - More agents (Gemini CLI, Aider) only need an adapter in `internal/agents`.

@@ -287,6 +287,7 @@ export function applyEvent(ev: BraidEvent) {
       return;
     }
     case "export.created":
+    case "export.updated":
       withDetail(ev.thread_id, ev.seq, (x) => ({ exports: upsertBy(x.exports, d) }));
       return;
     case "team.updated":

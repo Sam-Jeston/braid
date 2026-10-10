@@ -36,6 +36,8 @@ type session struct {
 	lastSeq       int64
 	conn          *websocket.Conn
 	presence      string
+
+	lastDeliveryCheck time.Time
 }
 
 // ReleasesURL is where members download Braid.
@@ -187,7 +189,12 @@ func (s *session) loop() {
 		if presence != "" {
 			s.sendPresence(presence)
 		}
+		tracking, stopTracking := context.WithCancel(s.ctx)
+		tracked := make(chan struct{})
+		go func() { defer close(tracked); s.trackDeliveries(tracking) }()
 		err = s.read(conn)
+		stopTracking()
+		<-tracked
 		s.mu.Lock()
 		s.conn = nil
 		s.mu.Unlock()

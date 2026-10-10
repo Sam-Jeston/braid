@@ -184,6 +184,15 @@ var migrations = []string{
 	UPDATE teams SET repos_json = json_array(json_object('name', '', 'url', repo_url, 'branch', default_branch)) WHERE repo_url != '';
 	ALTER TABLE teams DROP COLUMN repo_url;
 	ALTER TABLE teams DROP COLUMN default_branch;`,
+
+	// Published plans track whether they were built. Plans published before
+	// this start out planned.
+	`ALTER TABLE threads ADD COLUMN delivery TEXT NOT NULL DEFAULT '';
+	ALTER TABLE threads ADD COLUMN delivery_source TEXT NOT NULL DEFAULT '';
+	ALTER TABLE threads ADD COLUMN delivery_by TEXT;
+	ALTER TABLE threads ADD COLUMN delivery_at INTEGER;
+	UPDATE threads SET delivery = 'planned', delivery_at = (SELECT MAX(created_at) FROM exports WHERE thread_id = threads.id)
+		WHERE id IN (SELECT thread_id FROM exports);`,
 }
 
 func openDB(path string) (*sql.DB, error) {
@@ -413,15 +422,20 @@ func listMembers(ctx context.Context, q queryer, teamID string) ([]api.Member, e
 
 // --- threads ---
 
-const threadCols = `id, team_id, title, status, current_stage, created_by, created_at, updated_at`
+const threadCols = `id, team_id, title, status, current_stage, created_by, created_at, updated_at,
+	delivery, delivery_source, delivery_by, delivery_at`
 
 func scanThread(r scanner) (api.Thread, error) {
 	var t api.Thread
 	var created, updated int64
-	if err := r.Scan(&t.ID, &t.TeamID, &t.Title, &t.Status, &t.CurrentStage, &t.CreatedBy, &created, &updated); err != nil {
+	var deliveryBy sql.NullString
+	var deliveryAt sql.NullInt64
+	if err := r.Scan(&t.ID, &t.TeamID, &t.Title, &t.Status, &t.CurrentStage, &t.CreatedBy, &created, &updated,
+		&t.Delivery, &t.DeliverySource, &deliveryBy, &deliveryAt); err != nil {
 		return t, err
 	}
 	t.CreatedAt, t.UpdatedAt = fromMs(created), fromMs(updated)
+	t.DeliveryBy, t.DeliveryAt = deliveryBy.String, fromNullMs(deliveryAt)
 	return t, nil
 }
 
@@ -483,8 +497,13 @@ func saveStages(ctx context.Context, q queryer, t *api.Thread) error {
 			return err
 		}
 	}
-	_, err := q.ExecContext(ctx, `UPDATE threads SET title = ?, status = ?, current_stage = ?, updated_at = ? WHERE id = ?`,
-		t.Title, t.Status, t.CurrentStage, ms(t.UpdatedAt), t.ID)
+	return saveThread(ctx, q, t)
+}
+
+func saveThread(ctx context.Context, q queryer, t *api.Thread) error {
+	_, err := q.ExecContext(ctx, `UPDATE threads SET title = ?, status = ?, current_stage = ?, updated_at = ?,
+		delivery = ?, delivery_source = ?, delivery_by = ?, delivery_at = ? WHERE id = ?`,
+		t.Title, t.Status, t.CurrentStage, ms(t.UpdatedAt), t.Delivery, t.DeliverySource, nullStr(t.DeliveryBy), nullMs(t.DeliveryAt), t.ID)
 	return err
 }
 

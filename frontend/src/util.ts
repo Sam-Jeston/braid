@@ -1,4 +1,4 @@
-import type { LocalState, Member, RepoStatus, Role, Stage, StageState, Thread } from "./types";
+import type { Delivery, IssueState, LocalState, Member, RepoStatus, Role, Stage, StageState, Thread } from "./types";
 
 export const cx = (...xs: (string | false | null | undefined)[]) => xs.filter(Boolean).join(" ");
 
@@ -40,6 +40,29 @@ export const STAGES: Record<Stage, { title: string; owner: Role | null; verb: st
 };
 
 export const STAGE_ORDER: Stage[] = ["sparring", "design", "technical", "plan"];
+
+export const DELIVERY: Record<Delivery, { label: string; icon: string }> = {
+  planned: { label: "Planned", icon: "list" },
+  built: { label: "Built", icon: "check" },
+  cancelled: { label: "Cancelled", icon: "x" },
+};
+
+export const ISSUE_STATES: Record<IssueState, string> = {
+  todo: "To do",
+  in_progress: "In progress",
+  done: "Done",
+  cancelled: "Cancelled",
+};
+
+/** A published thread's delivery (threads published before tracking existed count as planned). */
+export function deliveryOf(t: Thread): Delivery {
+  return t.delivery || "planned";
+}
+
+/** Short status for thread lists: the current stage, or what became of the published plan. */
+export function phaseLabel(t: Thread): string {
+  return t.status === "completed" ? deliveryOf(t) : STAGES[t.current_stage].title;
+}
 
 export function stageState(t: Thread, s: Stage): StageState {
   return t.stages.find((x) => x.stage === s) || { stage: s, status: "locked" };

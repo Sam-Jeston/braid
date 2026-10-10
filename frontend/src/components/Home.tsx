@@ -3,7 +3,7 @@ import { Icon } from "../icons";
 import { Markdown } from "../markdown";
 import { go, loadLatestScan, setState, startScan, useStore } from "../store";
 import { Button } from "../ui";
-import { agentName, checkoutLabel, cx, shortRevision, STAGE_ORDER, STAGES, stageState, timeAgo } from "../util";
+import { agentName, checkoutLabel, cx, deliveryOf, phaseLabel, shortRevision, STAGE_ORDER, stageState, timeAgo } from "../util";
 import { RunCard } from "./RunCard";
 
 export function Home() {
@@ -16,6 +16,7 @@ export function Home() {
   }, [l.connection]);
 
   const active = threads.filter((t) => t.status === "active");
+  const planned = threads.filter((t) => t.status === "completed" && deliveryOf(t) === "planned").length;
   const running = active.filter((t) => t.stages.some((s) => s.active_run_id)).length;
   const agent = l.agents.find((a) => a.id === l.agent);
   const hour = new Date().getHours();
@@ -31,6 +32,7 @@ export function Home() {
           <p className="muted">
             {active.length} active thread{active.length === 1 ? "" : "s"}
             {running > 0 && ` · ${running} with agents working right now`}
+            {planned > 0 && ` · ${planned} planned, waiting to be built`}
           </p>
         </div>
         <Button variant="primary" icon="plus" onClick={() => setState({ newThreadOpen: true })}>
@@ -128,7 +130,7 @@ export function Home() {
                     <i key={s} className={cx("pip", `pip-${stageState(t, s).status}`, `pip-${s}`, stageState(t, s).active_run_id && "pip-running")} />
                   ))}
                 </span>
-                <span className="muted small">{t.status === "completed" ? "planned" : STAGES[t.current_stage].title}</span>
+                <span className="muted small">{phaseLabel(t)}</span>
                 <span className="muted small">{timeAgo(t.updated_at)}</span>
               </button>
             ))}

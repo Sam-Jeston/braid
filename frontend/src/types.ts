@@ -4,6 +4,10 @@ export type Role = "product" | "design" | "engineering";
 export type Stage = "sparring" | "design" | "technical" | "plan";
 export type StageStatus = "locked" | "open" | "approved";
 export type ThreadStatus = "active" | "completed" | "archived";
+/** What became of a published plan. */
+export type Delivery = "planned" | "built" | "cancelled";
+/** An issue's state, as read back from Linear or Jira. */
+export type IssueState = "todo" | "in_progress" | "done" | "cancelled";
 export type RunStatus = "running" | "succeeded" | "failed" | "cancelled" | "abandoned";
 export type OutputType = "markdown" | "linear" | "jira";
 
@@ -75,6 +79,12 @@ export interface Thread {
   created_at: string;
   updated_at: string;
   stages: StageState[];
+  /** Empty until the plan is published. */
+  delivery?: Delivery;
+  /** "manual", or the tracker it was read from ("linear" | "jira"). */
+  delivery_source?: string;
+  delivery_by?: string;
+  delivery_at?: string | null;
 }
 
 export interface Message {
@@ -132,6 +142,8 @@ export interface ExportItem {
   title: string;
   key: string;
   url: string;
+  /** Last state read from the tracker (Linear and Jira only). */
+  state?: IssueState;
 }
 
 export interface Export {

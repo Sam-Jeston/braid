@@ -60,6 +60,32 @@ const (
 	ThreadArchived  ThreadStatus = "archived"
 )
 
+// Delivery is what became of a published plan. It starts as planned when the
+// plan is published; engineers mark it built or cancelled, and members' apps
+// do so automatically when the team's tracker shows the work closed.
+type Delivery string
+
+const (
+	DeliveryPlanned   Delivery = "planned"
+	DeliveryBuilt     Delivery = "built"
+	DeliveryCancelled Delivery = "cancelled"
+)
+
+func (d Delivery) Valid() bool {
+	return d == DeliveryPlanned || d == DeliveryBuilt || d == DeliveryCancelled
+}
+
+// DeliveryManual is the DeliverySource of a delivery an engineer set by hand.
+const DeliveryManual = "manual"
+
+// Issue states, as Braid reads them back from a tracker.
+const (
+	IssueTodo       = "todo"
+	IssueInProgress = "in_progress"
+	IssueDone       = "done"
+	IssueCancelled  = "cancelled"
+)
+
 type RunKind string
 
 const (
@@ -267,6 +293,11 @@ type Thread struct {
 	CreatedAt    time.Time    `json:"created_at"`
 	UpdatedAt    time.Time    `json:"updated_at"`
 	Stages       []StageState `json:"stages"`
+	// Delivery is empty until the plan is published.
+	Delivery       Delivery   `json:"delivery,omitempty"`
+	DeliverySource string     `json:"delivery_source,omitempty"` // DeliveryManual, or the tracker it was read from (OutputLinear, OutputJira)
+	DeliveryBy     string     `json:"delivery_by,omitempty"`     // the engineer who set it, or the member whose app read it from the tracker
+	DeliveryAt     *time.Time `json:"delivery_at,omitempty"`
 }
 
 func (t *Thread) StageState(s Stage) *StageState {
@@ -342,6 +373,7 @@ type ExportItem struct {
 	Title string `json:"title"`
 	Key   string `json:"key"`
 	URL   string `json:"url"`
+	State string `json:"state,omitempty"` // last state read from the tracker (Issue*); Linear and Jira only
 }
 
 type Export struct {
@@ -356,6 +388,21 @@ type Export struct {
 type CreateExportRequest struct {
 	Target string       `json:"target"`
 	Items  []ExportItem `json:"items"`
+}
+
+// DeliveryUpdate moves a published plan between planned, built and
+// cancelled. An engineer sets it by hand when Tracker is empty. Otherwise a
+// member's app reports what it read from the tracker, along with the state
+// of each issue, and the server only accepts it while the plan is planned.
+type DeliveryUpdate struct {
+	Delivery Delivery     `json:"delivery"`
+	Tracker  string       `json:"tracker,omitempty"` // OutputLinear | OutputJira
+	Items    []IssueState `json:"items,omitempty"`
+}
+
+type IssueState struct {
+	Key   string `json:"key"`
+	State string `json:"state"`
 }
 
 type ThreadDetail struct {
@@ -447,6 +494,7 @@ const (
 	EvMemberUpdated   = "member.updated"
 	EvMemberRemoved   = "member.removed"
 	EvExportCreated   = "export.created"
+	EvExportUpdated   = "export.updated" // issue states read back from the tracker
 	// Ephemeral (no seq):
 	EvPresence = "presence"
 	EvHello    = "hello"

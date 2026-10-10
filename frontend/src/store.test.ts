@@ -95,3 +95,12 @@ test("an incompatible connection carries what to update, and clears once connect
   applyEvent({ seq: 0, type: "local.connection", data: { status: "offline", error: "down", update: null }, created_at: "" });
   expect(getState().local!.update).toBeNull();
 });
+
+test("tracker states arrive as export.updated and replace the export", () => {
+  const exp = (state?: string) => ({ id: "exp_1", thread_id: "thr_1", target: "linear", items: [{ ref: "epic", key: "ENG-1", title: "E", url: "u", state }] });
+  applyEvent({ seq: 11, type: "export.created", thread_id: "thr_1", data: exp(), created_at: "" });
+  applyEvent({ seq: 12, type: "export.updated", thread_id: "thr_1", data: exp("in_progress"), created_at: "" });
+  const exports = getState().details.thr_1.exports;
+  expect(exports).toHaveLength(1);
+  expect(exports[0].items[0].state).toBe("in_progress");
+});

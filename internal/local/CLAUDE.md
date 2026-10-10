@@ -18,6 +18,13 @@ The desktop core, shared by `cmd/braid` (browser UI) and `desktop/` (Wails).
 - Always report a finish (`c.finish` retries). Cancelled runs upload no artifacts.
 - Each team repository has its own managed clone, synced concurrently (`syncRepos`). Don't `git reset` a clone while a run is using it (`activeRunsFor`): later runs only sync what's missing.
 
+## Delivery tracking (`delivery.go`)
+
+- While connected, the session runs `trackDeliveries` (5s after connecting, then every 15 minutes; reconnecting doesn't bring the next check forward). It lists planned exports and reads their issues with **this member's** tracker credentials.
+- Jira credentials only go to the team's configured site, over HTTPS, and only for issues whose URL is on that site (`issueTracker`). Export items are written by teammates' apps, so never derive a host from them.
+- A 409 from `/delivery` means a teammate's app or an engineer got there first, so ignore it.
+- Timings and the Linear endpoint are fields on `Core` (`deliveryTiming`, `linearEndpoint`) so tests can change them without racing the session's goroutines.
+
 ## Loopback API (`api.go`)
 
 - Every route requires the per-launch bearer token, except static assets and `/local/ws`, which takes `?token=`. Keep the `Host` check and the CORS origin allowlist. Never add an unauthenticated route that returns data.

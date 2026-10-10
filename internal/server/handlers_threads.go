@@ -62,7 +62,8 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request, a *a
 			Stages: workflow.InitialStages(),
 		}
 		id = t.ID
-		if _, err := tx.ExecContext(ctx, `INSERT INTO threads (`+threadCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO threads (id, team_id, title, status, current_stage, created_by, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			t.ID, t.TeamID, t.Title, t.Status, t.CurrentStage, t.CreatedBy, ms(now), ms(now)); err != nil {
 			return err
 		}
@@ -523,6 +524,7 @@ func (s *Server) handleCreateExport(w http.ResponseWriter, r *http.Request, a *a
 		}
 		st.Status, st.ApprovedBy, st.ApprovedAt = api.StageApproved, a.member.ID, &now
 		t.Status = api.ThreadCompleted
+		t.Delivery, t.DeliverySource, t.DeliveryBy, t.DeliveryAt = api.DeliveryPlanned, "", "", &now
 		if err := tx.emit(t.TeamID, t.ID, "", api.EvExportCreated, a.member.ID, exp); err != nil {
 			return err
 		}

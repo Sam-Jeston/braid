@@ -5,7 +5,7 @@ import { Markdown } from "../markdown";
 import { errorToast, go, selectStage, startRun, useStore } from "../store";
 import type { Message, Run, Stage, Thread, ThreadDetail } from "../types";
 import { Avatar, Button, RoleChip, Spinner } from "../ui";
-import { agentName, cx, memberName, STAGE_ORDER, STAGES, stageState, timeAgo } from "../util";
+import { agentName, cx, DELIVERY, deliveryOf, memberName, STAGE_ORDER, STAGES, stageState, timeAgo } from "../util";
 import { DocPanel } from "./DocPanel";
 import { RunCard } from "./RunCard";
 
@@ -60,7 +60,7 @@ function ThreadHeader({ t }: { t: Thread }) {
         )}
         <span className="muted small">
           Started by {memberName(l, t.created_by)} · {timeAgo(t.created_at)}
-          {t.status === "completed" && " · Planned"}
+          {t.status === "completed" && ` · ${DELIVERY[deliveryOf(t)].label}`}
         </span>
       </div>
       <div className="viewers-lg">
@@ -172,7 +172,7 @@ function Feed({ detail, stage }: { detail: ThreadDetail; stage: Stage }) {
         it.kind === "msg" ? (
           it.m.kind === "system" ? (
             <div key={it.m.id} className="system-line">
-              <Icon name={it.m.body.startsWith("approved") || it.m.body.startsWith("published") ? "check" : "refresh"} size={12} />
+              <Icon name={systemIcon(it.m.body)} size={12} />
               <b>{memberName(l, it.m.author_id)}</b> {it.m.body} · {timeAgo(it.m.created_at)}
             </div>
           ) : (
@@ -314,4 +314,9 @@ function Composer({ t, stage }: { t: Thread; stage: Stage }) {
       </div>
     </div>
   );
+}
+
+function systemIcon(body: string): string {
+  if (/cancelled/.test(body)) return "x";
+  return /^(approved|published|marked|found)/.test(body) ? "check" : "refresh";
 }

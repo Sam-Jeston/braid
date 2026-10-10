@@ -3,9 +3,24 @@ import { local, openExternal, remote } from "../api";
 import { Icon } from "../icons";
 import { Markdown } from "../markdown";
 import { errorToast, go, startRun, toast, useStore } from "../store";
-import type { Artifact, Plan, Stage, Thread, ThreadDetail } from "../types";
+import type { Artifact, Delivery, Export, IssueState, Plan, Stage, Thread, ThreadDetail } from "../types";
 import { Badge, Button, Empty, Modal, RoleChip } from "../ui";
-import { capitalize, cx, fileLabel, hasRole, memberName, outputLabel, possessive, STAGE_ORDER, STAGES, stageState, timeAgo } from "../util";
+import {
+  capitalize,
+  cx,
+  DELIVERY,
+  deliveryOf,
+  fileLabel,
+  hasRole,
+  ISSUE_STATES,
+  memberName,
+  outputLabel,
+  possessive,
+  STAGE_ORDER,
+  STAGES,
+  stageState,
+  timeAgo,
+} from "../util";
 
 type Tab = { id: string; label: string; icon: string };
 
@@ -324,9 +339,12 @@ function PlanView({ detail }: { detail: ThreadDetail }) {
             {plan.tickets.length} tickets · {points} points
           </span>
           {exp && keyFor("epic") && (
-            <button className="link-btn" onClick={() => openExternal(keyFor("epic")!.url, errorToast)}>
-              {keyFor("epic")!.key} <Icon name="external" size={12} />
-            </button>
+            <>
+              <IssueStateChip state={keyFor("epic")!.state} />
+              <button className="link-btn" onClick={() => openExternal(keyFor("epic")!.url, errorToast)}>
+                {keyFor("epic")!.key} <Icon name="external" size={12} />
+              </button>
+            </>
           )}
         </div>
         <h2>{plan.epic.title}</h2>
@@ -343,6 +361,7 @@ function PlanView({ detail }: { detail: ThreadDetail }) {
                 {t.role && ["product", "design", "engineering"].includes(t.role) && <RoleChip role={t.role as any} small />}
                 <span className="ticket-type">{t.type}</span>
                 {t.depends_on?.length > 0 && <span className="muted small">after {t.depends_on.join(", ")}</span>}
+                <IssueStateChip state={created?.state} />
                 <span className="estimate">{t.estimate}</span>
               </button>
               {open === t.ref && (
@@ -499,24 +518,7 @@ function PlanActions({ detail }: { detail: ThreadDetail }) {
       </div>
     );
   }
-  if (exp) {
-    return (
-      <div className="stage-actions approved">
-        <span className="approved-mark">
-          <Icon name="check" size={14} />
-        </span>
-        <span>
-          Published to <b>{outputLabel(exp.target)}</b> by {memberName(l, exp.member_id)} · {exp.items.length} items
-        </span>
-        <span className="grow" />
-        {exp.items[0] && (
-          <Button size="sm" variant="ghost" icon="external" onClick={() => openExternal(exp.items[0].url, errorToast)}>
-            Open
-          </Button>
-        )}
-      </div>
-    );
-  }
+  if (exp) return <DeliveryBar t={t} exp={exp} />;
   async function publish() {
     setBusy("publish");
     try {
@@ -583,4 +585,95 @@ function PlanActions({ detail }: { detail: ThreadDetail }) {
       )}
     </div>
   );
+}
+
+/**
+ * A published plan: where it went, and whether it was built. Braid reads
+ * Linear and Jira to mark it built or cancelled; engineers can also set it by
+ * hand, which is the only way for Markdown plans.
+ */
+function DeliveryBar({ t, exp }: { t: Thread; exp: Export }) {
+  const l = useStore((s) => s.local)!;
+  const [busy, setBusy] = useState<"" | "check" | Delivery>("");
+  const delivery = deliveryOf(t);
+  const tracker = exp.target === "markdown" ? "" : outputLabel(exp.target);
+  const canCheck =
+    (exp.target === "linear" && l.credentials["linear-api-key"]) || (exp.target === "jira" && l.credentials["jira-api-token"] && !!l.jira_email);
+  const tickets = exp.items.filter((i) => i.ref !== "epic");
+  const done = tickets.filter((i) => i.state === "done").length;
+  const known = tickets.some((i) => i.state);
+
+  let note: string;
+  if (delivery !== "planned") {
+    note =
+      t.delivery_source && t.delivery_source !== "manual"
+        ? `${delivery === "built" ? "Done" : "Cancelled"} in ${outputLabel(t.delivery_source)} · ${timeAgo(t.delivery_at)}`
+        : `Marked ${delivery} by ${memberName(l, t.delivery_by)} · ${timeAgo(t.delivery_at)}`;
+  } else if (tracker) {
+    note = `${known ? `${done} of ${tickets.length} tickets done · ` : ""}Braid marks it built when ${tracker} shows the work done`;
+  } else {
+    note = "Engineers mark it built once the work ships";
+  }
+
+  async function mark(d: Delivery) {
+    setBusy(d);
+    await remote("POST", `/threads/${t.id}/delivery`, { delivery: d }).catch(errorToast);
+    setBusy("");
+  }
+  async function check() {
+    setBusy("check");
+    try {
+      const res = await local<{ checked: number; updated: number }>("POST", `/threads/${t.id}/check-delivery`);
+      if (!res.updated) toast(`Not finished in ${tracker} yet`);
+    } catch (e) {
+      errorToast(e);
+    } finally {
+      setBusy("");
+    }
+  }
+  return (
+    <div className={cx("stage-actions", "delivery", `delivery-${delivery}`)}>
+      <span className="approved-mark">
+        <Icon name={DELIVERY[delivery].icon} size={14} />
+      </span>
+      <div className="delivery-text">
+        <span>
+          <b>{DELIVERY[delivery].label}</b> · published to {outputLabel(exp.target)} by {memberName(l, exp.member_id)} · {exp.items.length} items
+        </span>
+        <span className="muted small">{note}</span>
+      </div>
+      <div className="delivery-actions">
+        {delivery === "planned" && canCheck && (
+          <Button size="sm" variant="ghost" icon="refresh" loading={busy === "check"} onClick={check} title={`Read the issues' state from ${tracker} now`}>
+            Check {tracker}
+          </Button>
+        )}
+        {hasRole(l.me, "engineering") &&
+          (delivery === "planned" ? (
+            <>
+              <Button size="sm" variant="ghost" icon="x" loading={busy === "cancelled"} onClick={() => mark("cancelled")}>
+                Mark cancelled
+              </Button>
+              <Button size="sm" variant="approve" icon="check" loading={busy === "built"} onClick={() => mark("built")}>
+                Mark built
+              </Button>
+            </>
+          ) : (
+            <Button size="sm" variant="ghost" icon="history" loading={busy === "planned"} onClick={() => mark("planned")}>
+              Back to planned
+            </Button>
+          ))}
+        {exp.items[0] && (
+          <Button size="sm" variant="ghost" icon="external" onClick={() => openExternal(exp.items[0].url, errorToast)}>
+            Open
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function IssueStateChip({ state }: { state?: IssueState }) {
+  if (!state) return null;
+  return <span className={cx("issue-state", `issue-${state}`)}>{ISSUE_STATES[state]}</span>;
 }
