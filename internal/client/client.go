@@ -138,14 +138,14 @@ type IncompatibleError struct {
 }
 
 func (e *IncompatibleError) Error() string {
-	server := "your team's server"
+	version := ""
 	if e.ServerVersion != "" && e.ServerVersion != "dev" {
-		server += " (" + e.ServerVersion + ")"
+		version = " (" + e.ServerVersion + ")"
 	}
 	if e.UpdateApp {
-		return "This version of Braid is too old for " + server + ". Update Braid to reconnect."
+		return "This version of Braid is too old for your team's server" + version + ". Update Braid to reconnect."
 	}
-	return "This version of Braid needs a newer server than " + server + ". Ask whoever runs your Braid server to update it."
+	return "Your team's server" + version + " is too old for this version of Braid. Ask whoever runs it to update braid-server."
 }
 
 // CheckCompatible reports whether this app can talk to the server described

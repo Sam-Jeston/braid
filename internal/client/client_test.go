@@ -42,7 +42,7 @@ func TestIncompatibleMessages(t *testing.T) {
 		t.Errorf("app message: %s", app)
 	}
 	srv := (&IncompatibleError{ServerVersion: "dev"}).Error()
-	if !strings.Contains(srv, "update it") || strings.Contains(srv, "dev") {
+	if !strings.Contains(srv, "update braid-server") || strings.Contains(srv, "(dev)") {
 		t.Errorf("server message: %s", srv)
 	}
 }
