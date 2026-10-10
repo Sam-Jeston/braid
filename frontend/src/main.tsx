@@ -5,6 +5,7 @@ import { NewThread } from "./components/NewThread";
 import { Settings } from "./components/Settings";
 import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
+import { UpdateRequired } from "./components/UpdateRequired";
 import { Icon, Logo } from "./icons";
 import { init, useStore } from "./store";
 import { Spinner, Toasts } from "./ui";
@@ -63,9 +64,15 @@ function Shell() {
             <Icon name="alert" size={14} /> Can't reach your team's server{connError ? `: ${connError}` : ""}. Retrying…
           </div>
         )}
-        {route.view === "home" && <Home />}
-        {route.view === "thread" && <ThreadView key={route.id} id={route.id} stage={route.stage} />}
-        {route.view === "settings" && <Settings tab={route.tab} />}
+        {connection === "incompatible" ? (
+          <UpdateRequired />
+        ) : (
+          <>
+            {route.view === "home" && <Home />}
+            {route.view === "thread" && <ThreadView key={route.id} id={route.id} stage={route.stage} />}
+            {route.view === "settings" && <Settings tab={route.tab} />}
+          </>
+        )}
       </main>
       {newThread && <NewThread />}
     </div>

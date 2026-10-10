@@ -150,8 +150,10 @@ type State struct {
 	Me              *api.Member        `json:"me"`
 	Team            *api.Team          `json:"team"`
 	Members         []api.Member       `json:"members"`
-	Connection      string             `json:"connection"`
+	Connection      string             `json:"connection"` // connecting | connected | offline | revoked | incompatible
 	ConnectionError string             `json:"connection_error,omitempty"`
+	Update          *UpdateNeeded      `json:"update,omitempty"` // set while Connection is "incompatible"
+	ServerVersion   string             `json:"server_version,omitempty"`
 	Agents          []agents.Info      `json:"agents"`
 	Agent           string             `json:"agent"`
 	AgentModel      string             `json:"agent_model"`
@@ -208,7 +210,7 @@ func (c *Core) State() State {
 		s.mu.Lock()
 		st.Me, st.Team = s.me, s.team
 		st.Members = append(st.Members, s.members...)
-		st.Connection, st.ConnectionError = s.status, s.statusErr
+		st.Connection, st.ConnectionError, st.Update, st.ServerVersion = s.status, s.statusErr, s.update, s.serverVersion
 		var repos []api.RepoRef
 		if s.team != nil {
 			repos = s.team.Repos
@@ -243,6 +245,9 @@ func (c *Core) Probe(ctx context.Context, rawURL string, allowInsecure bool) (Pr
 		return ProbeResult{}, err
 	}
 	info, err := client.Info(ctx, u)
+	if err == nil {
+		err = client.CheckCompatible(info)
+	}
 	return ProbeResult{URL: u, Info: info}, err
 }
 

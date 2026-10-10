@@ -23,5 +23,6 @@ braid-server: shared team state plus realtime fan-out. It never runs agents.
 - Stage state changes go through `mutateThread`, which reloads, mutates, saves and emits `thread.updated`. Approval and reopen rules live in `handlers_threads.go` and must match `docs/ARCHITECTURE.md`.
 - Only one active run per stage (`thread_stages.active_run_id`). Anything that finishes, reaps or cancels a run must clear it.
 - Unauthenticated endpoints that accept codes or signatures must be wrapped in `s.limited`.
+- `checkProtocol` (in `Handler()`) answers apps older than `MinClientProtocol` with `426 client_outdated`. `/v1/info` must stay public and outside that gate, because it's how an app finds out what the server speaks. See "Versioning" in the root `CLAUDE.md`.
 
 Tests: `server_test.go` (auth), plus the end-to-end test in `internal/local`.

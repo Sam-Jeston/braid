@@ -14,7 +14,10 @@ import (
 )
 
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) error {
-	writeJSON(w, 200, api.ServerInfo{Product: "braid", Version: s.cfg.Version, ServerID: s.serverID})
+	writeJSON(w, 200, api.ServerInfo{
+		Product: "braid", Version: s.cfg.Version, ServerID: s.serverID,
+		Protocol: api.Protocol, MinClientProtocol: s.cfg.MinClientProtocol,
+	})
 	return nil
 }
 

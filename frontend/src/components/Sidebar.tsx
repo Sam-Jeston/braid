@@ -29,7 +29,7 @@ export function Sidebar() {
         <div className="team-switch-text">
           <b>{l.team?.name || l.active?.team_name}</b>
           <span className={cx("conn", `conn-${l.connection}`)} title={l.connection_error || l.connection}>
-            <i /> {l.connection === "connected" ? new URL(l.active!.server_url).host : l.connection}
+            <i /> {l.connection === "connected" ? new URL(l.active!.server_url).host : l.connection === "incompatible" ? "update needed" : l.connection}
           </span>
         </div>
         <Icon name="chevronDown" size={14} />

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"sync"
 	"time"
 
@@ -24,15 +25,42 @@ type session struct {
 	cancel  context.CancelFunc
 	done    chan struct{}
 
-	mu        sync.Mutex
-	me        *api.Member
-	team      *api.Team
-	members   []api.Member
-	status    string
-	statusErr string
-	lastSeq   int64
-	conn      *websocket.Conn
-	presence  string
+	mu            sync.Mutex
+	me            *api.Member
+	team          *api.Team
+	members       []api.Member
+	status        string
+	statusErr     string
+	update        *UpdateNeeded
+	serverVersion string
+	lastSeq       int64
+	conn          *websocket.Conn
+	presence      string
+}
+
+// ReleasesURL is where members download Braid.
+const ReleasesURL = "https://github.com/sam-jeston/braid/releases"
+
+// UpdateNeeded tells the UI which side has to be updated before this device
+// can talk to its team's server again.
+type UpdateNeeded struct {
+	App           bool   `json:"app"` // update this app; otherwise the team's server is too old
+	ServerVersion string `json:"server_version,omitempty"`
+	DownloadURL   string `json:"download_url,omitempty"`
+}
+
+var releaseTag = regexp.MustCompile(`^v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$`)
+
+func updateNeeded(ie *client.IncompatibleError) *UpdateNeeded {
+	u := &UpdateNeeded{App: ie.UpdateApp, ServerVersion: ie.ServerVersion}
+	if u.App {
+		// The release that matches the server is the one sure to be compatible.
+		u.DownloadURL = ReleasesURL + "/latest"
+		if releaseTag.MatchString(ie.ServerVersion) {
+			u.DownloadURL = ReleasesURL + "/tag/" + ie.ServerVersion
+		}
+	}
+	return u
 }
 
 func newSession(c *Core, p Profile, cl *client.Client) *session {
@@ -56,14 +84,22 @@ func (s *session) profileSnapshot() Profile {
 	return s.profile
 }
 
-func (s *session) setStatus(status, errMsg string) {
+func (s *session) setStatus(status, errMsg string) { s.setStatusUpdate(status, errMsg, nil) }
+
+func (s *session) setStatusUpdate(status, errMsg string, update *UpdateNeeded) {
 	s.mu.Lock()
 	changed := s.status != status || s.statusErr != errMsg
-	s.status, s.statusErr = status, errMsg
+	s.status, s.statusErr, s.update = status, errMsg, update
 	s.mu.Unlock()
 	if changed {
-		s.c.bus.PublishLocal("local.connection", map[string]string{"status": status, "error": errMsg})
+		s.c.bus.PublishLocal("local.connection", map[string]any{"status": status, "error": errMsg, "update": update})
 	}
+}
+
+func (s *session) currentStatus() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.status
 }
 
 func isRevoked(err error) bool {
@@ -80,14 +116,32 @@ func (s *session) sleep(d time.Duration) bool {
 	}
 }
 
+// waitIncompatible reports that an update is needed, then waits a while
+// before checking again: the server may be updated (or rolled back) meanwhile.
+func (s *session) waitIncompatible(ie *client.IncompatibleError) bool {
+	s.setStatusUpdate("incompatible", ie.Error(), updateNeeded(ie))
+	return s.sleep(incompatibleRetry)
+}
+
+var incompatibleRetry = time.Minute
+
 func (s *session) loop() {
 	defer close(s.done)
 	backoff := time.Second
 	for s.ctx.Err() == nil {
-		s.setStatus("connecting", "")
+		// Revoked and incompatible stick until resolved, so the UI doesn't flicker on each retry.
+		if st := s.currentStatus(); st != "revoked" && st != "incompatible" {
+			s.setStatus("connecting", "")
+		}
 		if err := s.refresh(s.ctx); err != nil {
 			if s.ctx.Err() != nil {
 				return
+			}
+			if ie, ok := client.AsIncompatible(err); ok {
+				if !s.waitIncompatible(ie) {
+					return
+				}
+				continue
 			}
 			if isRevoked(err) {
 				s.setStatus("revoked", "This device's access to the team was revoked. Re-join with a new invite.")
@@ -110,6 +164,12 @@ func (s *session) loop() {
 		if err != nil {
 			if s.ctx.Err() != nil {
 				return
+			}
+			if ie, ok := client.AsIncompatible(err); ok {
+				if !s.waitIncompatible(ie) {
+					return
+				}
+				continue
 			}
 			s.setStatus("offline", err.Error())
 			if !s.sleep(backoff) {
@@ -147,6 +207,16 @@ func (s *session) loop() {
 }
 
 func (s *session) refresh(ctx context.Context) error {
+	info, err := client.Info(ctx, s.client.BaseURL)
+	if err != nil {
+		return err
+	}
+	if err := client.CheckCompatible(info); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.serverVersion = info.Version
+	s.mu.Unlock()
 	me, err := s.client.Me(ctx)
 	if err != nil {
 		return err

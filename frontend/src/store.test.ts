@@ -85,3 +85,13 @@ test("member updates refresh the current member", () => {
   applyEvent({ seq: 6, type: "member.joined", data: { id: "m2", display_name: "Dev", roles: [] }, created_at: "" });
   expect(getState().local!.members).toHaveLength(2);
 });
+
+test("an incompatible connection carries what to update, and clears once connected", () => {
+  setState({ local: { connection: "connected", members: [], repos: [], me: null } as unknown as LocalState });
+  const update = { app: true, server_version: "v0.5.0", download_url: "https://example.com/v0.5.0" };
+  applyEvent({ seq: 0, type: "local.connection", data: { status: "incompatible", error: "Update Braid", update }, created_at: "" });
+  expect(getState().local!.connection).toBe("incompatible");
+  expect(getState().local!.update).toEqual(update);
+  applyEvent({ seq: 0, type: "local.connection", data: { status: "offline", error: "down", update: null }, created_at: "" });
+  expect(getState().local!.update).toBeNull();
+});

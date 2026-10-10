@@ -42,7 +42,7 @@ go test ./internal/local -run TestPipeline -race   # full two-teammate pipeline 
 ## Cross-cutting rules
 
 - **Keep these in sync** when you change them:
-  - `internal/api/types.go` ↔ `frontend/src/types.ts`
+  - `internal/api/types.go` ↔ `frontend/src/types.ts`, and bump the protocol version (see [Versioning](#versioning-server--apps))
   - stage definitions in `internal/workflow/stages.go` ↔ `STAGES` in `frontend/src/util.ts`
 - **The server never executes agents or reads code.** Anything that touches the codebase, an agent CLI or tracker credentials belongs in `internal/local`.
 - **No secrets on the server.** Devices authenticate with Ed25519 keys. Tracker credentials live in the member's keychain (`internal/local/config.go` `Secrets`), never in `config.json` and never in a request to braid-server.
@@ -52,3 +52,32 @@ go test ./internal/local -run TestPipeline -race   # full two-teammate pipeline 
 - **Testing:** use the fake agent (`BRAID_FAKE_AGENT=1`, `BRAID_FAKE_DELAY_MS`) and `BRAID_SECRETS=file`. Extend `internal/local/e2e_test.go` when you change workflow behaviour, and keep the fake agent's outputs valid for every stage.
 - **Embedding:** `frontend/dist/.gitkeep` must exist so `go:embed all:dist` compiles on a fresh clone. Don't delete it; `build.ts` and `make clean` preserve it.
 - Match the surrounding code's style and comment density. Go code is `gofmt`ed. The frontend has no formatter config yet, so follow the existing formatting (2-space indent, double quotes, trailing commas, wide lines).
+
+## Versioning (server ↔ apps)
+
+A team upgrades its `braid-server`, and each member upgrades their app, on their own schedule. Either side can therefore be older than the other. `internal/api/version.go` holds the three numbers that decide whether they can work together:
+
+| Constant | Meaning |
+|---|---|
+| `Protocol` | the API version this build speaks |
+| `MinClientProtocol` | the oldest app the server still serves; apps from before versioning count as 0 |
+| `MinServerProtocol` | the oldest server the app works with |
+
+How the check works:
+
+- **The app checks.** It sends `Braid-Protocol: <Protocol>` on every request and reads `GET /v1/info` (`protocol`, `min_client_protocol`) whenever it connects or probes a server (`client.CheckCompatible`).
+- **The server turns old apps away.** It answers apps below its minimum with `426 client_outdated`; `/v1/info` and `/healthz` are exempt.
+- **The member sees what to do.** The connection becomes `incompatible`, and the UI swaps the workspace for **Update required**:
+  - app too old: a download link to the release matching the server's version;
+  - server too old: a request to get the server updated.
+- **Recovery is automatic.** The app rechecks every minute, so it reconnects by itself once the server is updated or rolled back.
+
+**When you change `internal/api`, a server route or an event payload:**
+
+1. **Bump `Protocol`.** Changes that land between two releases can share one bump.
+2. **The server stops working with older apps** (you removed or renamed a field or route, changed what one means, or made a request field required): set `MinClientProtocol = Protocol`. Prefer additive changes that older apps can ignore, so members aren't forced to update.
+3. **The app now needs something older servers lack** (a new route or field it can't do without): set `MinServerProtocol = Protocol`. Upgrading the server first is the usual path, so this is the cheaper of the two minimums to raise.
+4. **Purely additive changes** that both sides can ignore need step 1 only.
+5. **Never lower a minimum or reuse a number,** and say in the release notes when a minimum changed.
+
+Release versions (`git describe`, injected with `-X main.version`) are only displayed. Compatibility is decided by these numbers alone, so `dev` builds work too. Tests: `internal/client/client_test.go` (the rules), `internal/server/version_test.go` (the gate), `internal/local/version_test.go` (end to end).

@@ -680,7 +680,8 @@ input[type="checkbox"] {
   animation: pulse 1s infinite;
 }
 .conn-offline i,
-.conn-revoked i {
+.conn-revoked i,
+.conn-incompatible i {
   background: var(--err);
 }
 .switcher-menu {
@@ -1668,6 +1669,17 @@ input[type="checkbox"] {
 .empty p {
   max-width: 380px;
   margin: 0 0 8px;
+}
+.update-required {
+  max-width: 520px;
+  margin: 12vh auto 0;
+  padding: 0 24px;
+}
+.update-required .empty {
+  padding: 40px 30px;
+}
+.update-required .versions {
+  font-size: 12.5px;
 }
 .empty-icon {
   width: 46px;

@@ -35,6 +35,15 @@ Pushing a tag that starts with `v` also:
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
+### Compatibility between releases
+
+Teams upgrade their server and members upgrade their apps separately. If a release raises `MinClientProtocol` or `MinServerProtocol` in `internal/api/version.go`, say so in its notes:
+
+- **`MinClientProtocol` raised:** apps older than this release stop working with an upgraded server, and members are prompted to update.
+- **`MinServerProtocol` raised:** this release's app needs an upgraded server; upgrade servers first.
+
+An app that's too old links to the release whose tag matches the server's version, so keep server and app releases under the same tags.
+
 ## Setup
 
 ### Required

@@ -96,6 +96,10 @@ type ServerInfo struct {
 	Product  string `json:"product"`
 	Version  string `json:"version"`
 	ServerID string `json:"server_id"`
+	// Protocol and MinClientProtocol are absent (0) on servers built before
+	// protocol versioning; see version.go.
+	Protocol          int `json:"protocol"`
+	MinClientProtocol int `json:"min_client_protocol"`
 }
 
 // RepoRef is one repository the team's agents read. Name is short, unique

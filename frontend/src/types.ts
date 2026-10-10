@@ -209,6 +209,13 @@ export interface StageDescription {
   primary: string;
 }
 
+export interface UpdateNeeded {
+  /** True: this app is too old for the server. False: the server is too old for this app. */
+  app: boolean;
+  server_version?: string;
+  download_url?: string;
+}
+
 export interface LocalState {
   version: string;
   hostname: string;
@@ -218,8 +225,11 @@ export interface LocalState {
   me: Member | null;
   team: Team | null;
   members: Member[];
-  connection: "offline" | "connecting" | "connected" | "revoked";
+  connection: "offline" | "connecting" | "connected" | "revoked" | "incompatible";
   connection_error?: string;
+  /** Set while connection is "incompatible": which side needs updating. */
+  update?: UpdateNeeded | null;
+  server_version?: string;
   agents: AgentInfo[];
   agent: string;
   agent_model: string;

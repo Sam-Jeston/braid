@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,8 @@ func IsStatus(err error, status int) bool {
 }
 
 var httpClient = &http.Client{Timeout: 60 * time.Second}
+
+var protocol = strconv.Itoa(api.Protocol)
 
 // NormalizeServerURL validates a user-entered server URL. Plain HTTP is only
 // accepted for loopback addresses unless allowInsecure is set.
@@ -107,6 +110,7 @@ func publicCall(ctx context.Context, method, url string, in, out any) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(api.ProtocolHeader, protocol)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("can't reach the Braid server: %w", err)
@@ -124,6 +128,54 @@ func Info(ctx context.Context, baseURL string) (api.ServerInfo, error) {
 		return info, errors.New("that URL doesn't look like a Braid server")
 	}
 	return info, nil
+}
+
+// IncompatibleError means this app and the server don't share a protocol
+// version, so one of them has to be updated.
+type IncompatibleError struct {
+	UpdateApp     bool   // this app is too old for the server; otherwise the server is too old for the app
+	ServerVersion string // the server's release, e.g. "v0.4.0" ("dev" for local builds)
+}
+
+func (e *IncompatibleError) Error() string {
+	server := "your team's server"
+	if e.ServerVersion != "" && e.ServerVersion != "dev" {
+		server += " (" + e.ServerVersion + ")"
+	}
+	if e.UpdateApp {
+		return "This version of Braid is too old for " + server + ". Update Braid to reconnect."
+	}
+	return "This version of Braid needs a newer server than " + server + ". Ask whoever runs your Braid server to update it."
+}
+
+// CheckCompatible reports whether this app can talk to the server described
+// by info.
+func CheckCompatible(info api.ServerInfo) error {
+	return checkCompatible(info, api.Protocol, api.MinServerProtocol)
+}
+
+func checkCompatible(info api.ServerInfo, proto, minServer int) error {
+	switch {
+	case proto < info.MinClientProtocol:
+		return &IncompatibleError{UpdateApp: true, ServerVersion: info.Version}
+	case info.Protocol < minServer:
+		return &IncompatibleError{ServerVersion: info.Version}
+	}
+	return nil
+}
+
+// AsIncompatible recognizes an incompatibility found by CheckCompatible, or
+// reported by the server when it turns this app away.
+func AsIncompatible(err error) (*IncompatibleError, bool) {
+	var ie *IncompatibleError
+	if errors.As(err, &ie) {
+		return ie, true
+	}
+	var e *Error
+	if errors.As(err, &e) && e.Code == api.CodeClientOutdated {
+		return &IncompatibleError{UpdateApp: true}, true
+	}
+	return nil, false
 }
 
 // Registration signs a device registration for the given code.
@@ -208,6 +260,7 @@ func (c *Client) Raw(ctx context.Context, method, path string, body []byte, cont
 			return nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set(api.ProtocolHeader, protocol)
 		if contentType != "" {
 			req.Header.Set("Content-Type", contentType)
 		}
@@ -250,11 +303,14 @@ func (c *Client) Dial(ctx context.Context, since int64) (*websocket.Conn, error)
 		u += fmt.Sprintf("?since=%d", since)
 	}
 	conn, resp, err := websocket.Dial(ctx, u, &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": {"Bearer " + tok}},
+		HTTPHeader: http.Header{"Authorization": {"Bearer " + tok}, api.ProtocolHeader: {protocol}},
 	})
 	if err != nil {
 		if resp != nil && resp.StatusCode == http.StatusUnauthorized {
 			c.invalidate()
+		}
+		if resp != nil && resp.StatusCode == http.StatusUpgradeRequired {
+			return nil, &IncompatibleError{UpdateApp: true}
 		}
 		return nil, err
 	}

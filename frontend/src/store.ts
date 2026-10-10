@@ -231,7 +231,7 @@ export function applyEvent(ev: BraidEvent) {
       loadLocal().catch(() => {});
       return;
     case "local.connection":
-      updateLocal(() => ({ connection: d.status, connection_error: d.error }));
+      updateLocal(() => ({ connection: d.status, connection_error: d.error, update: d.update }));
       if (d.status === "connected") loadLocal().then(() => (state.threadsLoaded ? undefined : loadThreads())).catch(() => {});
       return;
     case "local.repo":

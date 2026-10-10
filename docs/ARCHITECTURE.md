@@ -36,6 +36,20 @@ Session (hourly)
 
 The **loopback API** between UI and core listens on `127.0.0.1` with a random per-launch token. Browsers can't add that header cross-site. Host headers must be loopback, which blocks DNS rebinding. In desktop mode the webview gets the token from the Wails asset server, which only the embedded webview can reach.
 
+## Versioning
+
+The server and each member's app upgrade independently. Each build speaks one API **protocol version** (`internal/api/version.go`); the server also states the oldest app it serves, and the app states the oldest server it works with.
+
+```
+app → GET /v1/info              ← {version, protocol, min_client_protocol}
+      app protocol < min_client_protocol   → "Update Braid" (link to the server's release)
+      server protocol < app's minimum      → "Ask whoever runs your server to update it"
+app → every request carries Braid-Protocol: N
+      server answers N < min_client_protocol with 426 client_outdated
+```
+
+The check runs on every (re)connect and on the onboarding probe. While incompatible, the app retries every minute. The rules for bumping the numbers are in the root `CLAUDE.md`.
+
 ## Thread workflow
 
 ```

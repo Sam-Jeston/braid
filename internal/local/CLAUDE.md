@@ -7,6 +7,7 @@ The desktop core, shared by `cmd/braid` (browser UI) and `desktop/` (Wails).
 - **Lock order is `Core.mu` → `session.mu`.** Never acquire `Core.mu` while holding `session.mu`. `session.profileSnapshot()` takes `Core.mu`, so don't call it under `session.mu`.
 - Don't do network I/O while holding either lock.
 - A session (`session.go`) owns the websocket to braid-server. It reconnects with backoff, replays from `lastSeq`, keeps member and team caches fresh, and forwards every remote event to the UI `Bus` verbatim.
+- Each (re)connect starts with `GET /v1/info` and `client.CheckCompatible`. On a mismatch the status becomes `incompatible`, with `State.Update` saying which side to update, and the session rechecks every minute. `revoked` and `incompatible` stay set across retries so the UI doesn't flicker.
 
 ## Runs (`runner.go`)
 

@@ -497,7 +497,10 @@ function DeviceSettings() {
           <span>Server</span>
           <code>{l.active?.server_url}</code>
           <span>Braid</span>
-          <code>v{l.version}</code>
+          <code>
+            {l.version}
+            {l.server_version && ` (server ${l.server_version})`}
+          </code>
         </div>
         <div className="row-end">
           <Button

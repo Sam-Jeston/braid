@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,7 +34,9 @@ type Config struct {
 	TokenTTL time.Duration
 	// TrustProxy uses X-Forwarded-For for rate limiting (behind a reverse proxy).
 	TrustProxy bool
-	Now        func() time.Time
+	// MinClientProtocol overrides api.MinClientProtocol (tests).
+	MinClientProtocol int
+	Now               func() time.Time
 }
 
 type Server struct {
@@ -63,6 +66,9 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Version == "" {
 		cfg.Version = "dev"
 	}
+	if cfg.MinClientProtocol == 0 {
+		cfg.MinClientProtocol = api.MinClientProtocol
+	}
 	db, err := openDB(cfg.DBPath)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
@@ -89,7 +95,7 @@ func (s *Server) ServerID() string { return s.serverID }
 
 func (s *Server) Close() error { return s.db.Close() }
 
-func (s *Server) Handler() http.Handler { return s.logRequests(s.mux) }
+func (s *Server) Handler() http.Handler { return s.logRequests(s.checkProtocol(s.mux)) }
 
 // Run performs background maintenance until ctx is cancelled.
 func (s *Server) Run(ctx context.Context) {
@@ -255,6 +261,29 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 			return
 		}
 		s.log.Debug("http", "method", r.Method, "path", r.URL.Path, "status", rec.status, "dur", time.Since(start).Round(time.Millisecond))
+	})
+}
+
+// checkProtocol turns away apps older than MinClientProtocol with a message
+// telling the member to update. /v1/info stays open so any app can find out
+// which protocol the server speaks.
+func (s *Server) checkProtocol(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/info" || r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// A missing or malformed header is an app from before versioning: protocol 0.
+		proto, _ := strconv.Atoi(r.Header.Get(api.ProtocolHeader))
+		if proto < s.cfg.MinClientProtocol {
+			msg := "This version of Braid is too old for your team's server. Update Braid to reconnect."
+			if s.cfg.Version != "dev" {
+				msg = fmt.Sprintf("This version of Braid is too old for your team's server, which runs %s. Update Braid to reconnect.", s.cfg.Version)
+			}
+			s.writeErr(w, r, errf(http.StatusUpgradeRequired, api.CodeClientOutdated, "%s", msg))
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
