@@ -2,7 +2,10 @@ GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 # Ubuntu 24.04+ / Debian 13+ only ship webkit2gtk-4.1: make desktop WAILS_TAGS=webkit2_41
+# (comma-separate extra tags: go build rejects a -tags list that mixes commas and spaces)
 WAILS_TAGS ?=
+comma := ,
+DESKTOP_TAGS = desktop,production$(addprefix $(comma),$(WAILS_TAGS))
 # Minimum Go statement coverage enforced by `make cover` (and CI).
 COVER_MIN ?= 75
 
@@ -28,7 +31,7 @@ app: frontend
 
 ## desktop: the native Wails app (needs gtk3 + webkit2gtk headers on Linux)
 desktop: frontend
-	CGO_ENABLED=1 $(GO) build -tags "desktop,production $(WAILS_TAGS)" -ldflags "$(LDFLAGS)" -o bin/braid-desktop ./desktop
+	CGO_ENABLED=1 $(GO) build -tags $(DESKTOP_TAGS) -ldflags "$(LDFLAGS)" -o bin/braid-desktop ./desktop
 
 ## desktop-windows: cross-compile the native app for Windows (WebView2, no CGO)
 desktop-windows: frontend
