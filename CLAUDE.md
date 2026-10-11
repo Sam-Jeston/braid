@@ -38,6 +38,7 @@ go test ./internal/local -run TestPipeline -race   # full two-teammate pipeline 
 | `internal/workflow` | stage definitions, ownership rules, prompts, plan schema |
 | `internal/export` | Markdown, Linear, Jira publishers |
 | `internal/repo` | managed read-only git clones |
+| `internal/host` | where agent CLIs and git run (this computer, or a WSL distro from Windows) and path mapping between the two |
 
 ## Cross-cutting rules
 

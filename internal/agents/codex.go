@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sam-jeston/braid/internal/api"
+	"github.com/sam-jeston/braid/internal/host"
 )
 
 // Codex runs the OpenAI Codex CLI headlessly (`codex exec --json`). Its
@@ -18,17 +19,17 @@ type Codex struct{}
 func (c *Codex) ID() string   { return "codex" }
 func (c *Codex) Name() string { return "Codex" }
 
-func (c *Codex) Detect(ctx context.Context) (string, error) {
-	bin, err := lookPath("codex")
+func (c *Codex) Detect(ctx context.Context, h host.Host) (string, error) {
+	bin, err := h.LookPath(ctx, "codex")
 	if err != nil {
 		return "", err
 	}
-	v, err := version(ctx, bin, "--version")
+	v, err := version(ctx, h, bin, "--version")
 	return strings.TrimPrefix(v, "codex-cli "), err
 }
 
 func (c *Codex) Args(spec Spec) []string {
-	args := []string{"exec", "--json", "-s", "workspace-write", "-C", spec.Dir, "--skip-git-repo-check", "--ephemeral"}
+	args := []string{"exec", "--json", "-s", "workspace-write", "-C", spec.host().Path(spec.Dir), "--skip-git-repo-check", "--ephemeral"}
 	if spec.Model != "" {
 		args = append(args, "-m", spec.Model)
 	}
@@ -36,7 +37,8 @@ func (c *Codex) Args(spec Spec) []string {
 }
 
 func (c *Codex) Run(ctx context.Context, spec Spec, emit func(api.RunOutput)) (Result, error) {
-	bin, err := lookPath("codex")
+	h := spec.host()
+	bin, err := h.LookPath(ctx, "codex")
 	if err != nil {
 		return Result{}, err
 	}
@@ -46,7 +48,7 @@ func (c *Codex) Run(ctx context.Context, spec Spec, emit func(api.RunOutput)) (R
 		prompt = "<instructions>\n" + spec.System + "\n</instructions>\n\n" + spec.Prompt
 	}
 	p := &codexParser{emit: emit, roots: spec.roots()}
-	runErr := runLines(ctx, bin, c.Args(spec), spec.Dir, prompt, p.line)
+	runErr := runLines(ctx, h, bin, c.Args(spec), spec.Dir, prompt, p.line)
 	if p.failure != "" {
 		return Result{Reply: p.last}, errors.New("codex: " + clip(p.failure, 500))
 	}

@@ -200,6 +200,12 @@ export interface AgentInfo {
   error?: string;
 }
 
+/** A place agents and git can run: this computer, or a WSL distribution on Windows. */
+export interface AgentHostOption {
+  id: string;
+  label: string;
+}
+
 /** This machine's checkout of one team repository. */
 export interface RepoStatus {
   name: string;
@@ -243,6 +249,10 @@ export interface LocalState {
   update?: UpdateNeeded | null;
   server_version?: string;
   agents: AgentInfo[];
+  /** Where agents and git run: "local" or "wsl:<distro>". */
+  agent_host: string;
+  /** Only Windows with WSL offers more than one. */
+  agent_hosts: AgentHostOption[];
   agent: string;
   agent_model: string;
   repos: RepoStatus[];

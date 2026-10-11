@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"github.com/sam-jeston/braid/internal/api"
 	"github.com/sam-jeston/braid/internal/authn"
 	"github.com/sam-jeston/braid/internal/client"
+	"github.com/sam-jeston/braid/internal/host"
 	"github.com/sam-jeston/braid/internal/repo"
 )
 
@@ -45,9 +47,21 @@ type Core struct {
 	sess           *session
 	runs           map[string]*localRun
 	agentInfo      []agents.Info
+	host           host.Host // where agents and git run; nil while hostErr is set
+	hostErr        error
+	hostOptions    []host.Option
+	hosts          hostFinder
 	deliveryTiming deliveryTiming
 	linearEndpoint string // empty: the real Linear API (tests use a fake)
 	wg             sync.WaitGroup
+}
+
+// hostFinder discovers where agents can run. It's a field on Core so tests
+// can stand in for WSL.
+type hostFinder struct {
+	options       func(context.Context) []host.Option
+	resolve       func(ctx context.Context, id, data string) (host.Host, error)
+	defaultDistro func(context.Context) string
 }
 
 func DefaultHome() string {
@@ -77,10 +91,11 @@ func New(opts Options) (*Core, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", cfgPath, err)
 	}
-	host, _ := os.Hostname()
+	hostname, _ := os.Hostname()
 	c := &Core{
 		opts: opts, log: opts.Logger, home: opts.Home, cfgPath: cfgPath, cfg: cfg,
-		bus: NewBus(), runs: map[string]*localRun{}, hostname: host, deliveryTiming: defaultDeliveryTiming,
+		bus: NewBus(), runs: map[string]*localRun{}, hostname: hostname, deliveryTiming: defaultDeliveryTiming,
+		hosts: hostFinder{options: host.Options, resolve: host.Resolve, defaultDistro: host.DefaultDistro},
 	}
 	c.secrets = openSecrets(opts.Home, cfg.SecretBackend)
 	if cfg.SecretBackend == "" {
@@ -105,10 +120,38 @@ func (c *Core) Home() string { return c.home }
 
 func (c *Core) saveConfig() error { return c.cfg.save(c.cfgPath) }
 
+// refreshAgents resolves where agents run and detects them there. On
+// Windows, until the member chooses, agents run in the default WSL
+// distribution if they're installed there and not on Windows.
 func (c *Core) refreshAgents(ctx context.Context) []agents.Info {
-	info := agents.Detect(ctx)
+	opts := c.hosts.options(ctx)
 	c.mu.Lock()
-	c.agentInfo = info
+	id := c.cfg.AgentHost
+	c.mu.Unlock()
+	var info []agents.Info
+	h, err := c.hosts.resolve(ctx, id, c.home)
+	if err != nil {
+		for _, a := range agents.All() {
+			info = append(info, agents.Info{ID: a.ID(), Name: a.Name(), Error: err.Error()})
+		}
+	} else {
+		info = agents.Detect(ctx, h)
+		if id == "" && !anyAvailable(info) {
+			if d := c.hosts.defaultDistro(ctx); d != "" {
+				if wh, err := c.hosts.resolve(ctx, "wsl:"+d, c.home); err == nil {
+					if wInfo := agents.Detect(ctx, wh); anyAvailable(wInfo) {
+						h, info, id = wh, wInfo, wh.ID()
+					}
+				}
+			}
+		}
+	}
+	c.mu.Lock()
+	c.agentInfo, c.hostOptions, c.host, c.hostErr = info, opts, h, err
+	if c.cfg.AgentHost == "" && id != "" {
+		c.cfg.AgentHost = id
+		_ = c.saveConfig()
+	}
 	if c.cfg.Agent == "" {
 		for _, a := range info {
 			if a.Available {
@@ -119,7 +162,27 @@ func (c *Core) refreshAgents(ctx context.Context) []agents.Info {
 		}
 	}
 	c.mu.Unlock()
+	if h != nil {
+		c.repos.SetHost(h, filepath.Join(h.DataDir(), "repos"))
+	}
 	return info
+}
+
+func anyAvailable(info []agents.Info) bool {
+	for _, a := range info {
+		if a.Available {
+			return true
+		}
+	}
+	return false
+}
+
+// where says where h runs agents, for messages: "on this machine" or "in WSL (Ubuntu)".
+func where(h host.Host) string {
+	if h.ID() == host.LocalID {
+		return "on this machine"
+	}
+	return "in " + h.Label()
 }
 
 // Shutdown cancels local runs (reporting them as cancelled) and disconnects.
@@ -157,6 +220,8 @@ type State struct {
 	Update          *UpdateNeeded      `json:"update,omitempty"` // set while Connection is "incompatible"
 	ServerVersion   string             `json:"server_version,omitempty"`
 	Agents          []agents.Info      `json:"agents"`
+	AgentHost       string             `json:"agent_host"`
+	AgentHosts      []host.Option      `json:"agent_hosts"`
 	Agent           string             `json:"agent"`
 	AgentModel      string             `json:"agent_model"`
 	Repos           []RepoState        `json:"repos"`
@@ -197,6 +262,10 @@ func (c *Core) State() State {
 		JiraEmail: c.cfg.JiraEmail, ExportDir: c.exportDir(), Connection: "offline",
 		Credentials: map[string]bool{}, LocalRuns: []string{}, Members: []api.Member{},
 		Repos: []RepoState{}, Stages: stageDescriptions(),
+		AgentHost: c.cfg.AgentHost, AgentHosts: append([]host.Option{}, c.hostOptions...),
+	}
+	if c.host != nil {
+		st.AgentHost = c.host.ID()
 	}
 	for _, k := range []string{secretLinear, secretJira} {
 		_, err := c.secrets.Get(k)
@@ -429,6 +498,8 @@ func (c *Core) Leave(ctx context.Context, profileID string) error {
 type SettingsPatch struct {
 	Agent      *string `json:"agent,omitempty"`
 	AgentModel *string `json:"agent_model,omitempty"`
+	// AgentHost moves agents and managed clones to "local" or "wsl:<distro>".
+	AgentHost *string `json:"agent_host,omitempty"`
 	// RepoOverrides sets (or, with an empty path, clears) local checkouts by repository name.
 	RepoOverrides map[string]string `json:"repo_overrides,omitempty"`
 	JiraEmail     *string           `json:"jira_email,omitempty"`
@@ -446,6 +517,18 @@ func (c *Core) UpdateSettings(p SettingsPatch) error {
 	}
 	if p.AgentModel != nil {
 		c.cfg.AgentModel = strings.TrimSpace(*p.AgentModel)
+	}
+	moved := false
+	if p.AgentHost != nil {
+		if !slices.ContainsFunc(c.hostOptions, func(o host.Option) bool { return o.ID == *p.AgentHost }) {
+			c.mu.Unlock()
+			if distro, ok := strings.CutPrefix(*p.AgentHost, "wsl:"); ok {
+				return fmt.Errorf("can't find the WSL distribution %q on this computer; if you just installed it, click Detect again", distro)
+			}
+			return fmt.Errorf("unknown place to run agents %q", *p.AgentHost)
+		}
+		moved = c.cfg.AgentHost != *p.AgentHost
+		c.cfg.AgentHost = *p.AgentHost
 	}
 	if p.JiraEmail != nil {
 		c.cfg.JiraEmail = strings.TrimSpace(*p.JiraEmail)
@@ -473,7 +556,10 @@ func (c *Core) UpdateSettings(p SettingsPatch) error {
 					delete(next, name)
 					continue
 				}
-				if abs, err := filepath.Abs(dir); err == nil {
+				if c.host != nil && c.host.FromToolPath(dir) != dir {
+					// A path inside WSL, like /home/me/code/app, as Windows reaches it.
+					dir = c.host.FromToolPath(dir)
+				} else if abs, err := filepath.Abs(dir); err == nil {
 					dir = abs
 				}
 				next[name] = dir
@@ -484,6 +570,9 @@ func (c *Core) UpdateSettings(p SettingsPatch) error {
 	}
 	err := c.saveConfig()
 	c.mu.Unlock()
+	if moved {
+		c.refreshAgents(context.Background())
+	}
 	c.bus.PublishLocal("local.state", nil)
 	return err
 }

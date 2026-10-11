@@ -8,13 +8,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/sam-jeston/braid/internal/api"
+	"github.com/sam-jeston/braid/internal/host"
 )
 
 type Status struct {
@@ -31,19 +31,38 @@ type Status struct {
 func (s Status) Available() bool { return s.State == "ready" || s.State == "override" }
 
 type Manager struct {
-	base     string
 	onChange func(teamID string, st Status)
 
 	mu     sync.Mutex
+	host   host.Host // where git runs
+	base   string    // Braid path of the clones
 	locks  map[string]*sync.Mutex
 	status map[string]Status
 }
 
+// NewManager keeps clones under base, running git on this computer.
 func NewManager(base string, onChange func(string, Status)) *Manager {
 	if onChange == nil {
 		onChange = func(string, Status) {}
 	}
-	return &Manager{base: base, onChange: onChange, locks: map[string]*sync.Mutex{}, status: map[string]Status{}}
+	return &Manager{host: host.Local{}, base: base, onChange: onChange, locks: map[string]*sync.Mutex{}, status: map[string]Status{}}
+}
+
+// SetHost moves managed clones to base on h. Statuses are forgotten, so
+// the next sync clones there.
+func (m *Manager) SetHost(h host.Host, base string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.host.ID() == h.ID() && m.base == base {
+		return
+	}
+	m.host, m.base, m.status = h, base, map[string]Status{}
+}
+
+func (m *Manager) where() (host.Host, string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.host, m.base
 }
 
 func key(teamID, name string) string { return teamID + "/" + name }
@@ -96,6 +115,7 @@ func (m *Manager) Sync(ctx context.Context, teamID string, r api.RepoRef, overri
 	l.Lock()
 	defer l.Unlock()
 	url, branch := r.URL, r.Branch
+	h, base := m.where()
 
 	if override != "" {
 		st := Status{Name: r.Name, State: "override", Dir: override, URL: url, Branch: branch}
@@ -103,7 +123,7 @@ func (m *Manager) Sync(ctx context.Context, teamID string, r api.RepoRef, overri
 			st.State, st.Error = "error", "local checkout "+override+" not found"
 			return m.set(teamID, st), fmt.Errorf("%s", st.Error)
 		}
-		st.Commit, _ = git(ctx, override, "rev-parse", "HEAD")
+		st.Commit, _ = git(ctx, h, override, "rev-parse", "HEAD")
 		now := time.Now()
 		st.SyncedAt = &now
 		return m.set(teamID, st), nil
@@ -123,15 +143,15 @@ func (m *Manager) Sync(ctx context.Context, teamID string, r api.RepoRef, overri
 		return prev, nil
 	}
 
-	m.dropLegacyClone(teamID)
-	dir := filepath.Join(m.base, safeName(teamID), safeName(r.Name))
+	m.dropLegacyClone(base, teamID)
+	dir := filepath.Join(base, safeName(teamID), safeName(r.Name))
 	st := Status{Name: r.Name, Dir: dir, URL: url, Branch: branch}
 	fail := func(err error) (Status, error) {
 		st.State, st.Error = "error", err.Error()
 		return m.set(teamID, st), err
 	}
 
-	if origin, err := git(ctx, dir, "config", "--get", "remote.origin.url"); err != nil || origin != url {
+	if origin, err := git(ctx, h, dir, "config", "--get", "remote.origin.url"); err != nil || origin != url {
 		os.RemoveAll(dir)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
@@ -146,9 +166,9 @@ func (m *Manager) Sync(ctx context.Context, teamID string, r api.RepoRef, overri
 		if branch != "" {
 			args = append(args, "--branch", branch)
 		}
-		args = append(args, "--", url, tmp)
+		args = append(args, "--", url, h.Path(tmp))
 		cctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
-		_, err := git(cctx, "", args...)
+		_, err := git(cctx, h, "", args...)
 		cancel()
 		if err != nil {
 			os.RemoveAll(tmp)
@@ -165,24 +185,24 @@ func (m *Manager) Sync(ctx context.Context, teamID string, r api.RepoRef, overri
 			ref = branch
 		}
 		fctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		_, err := git(fctx, dir, "fetch", "--prune", "--filter=blob:none", "--", "origin", ref)
+		_, err := git(fctx, h, dir, "fetch", "--prune", "--filter=blob:none", "--", "origin", ref)
 		cancel()
 		if err != nil {
 			return fail(fmt.Errorf("couldn't fetch %s: %w", url, err))
 		}
-		if _, err := git(ctx, dir, "reset", "--hard", "FETCH_HEAD"); err != nil {
+		if _, err := git(ctx, h, dir, "reset", "--hard", "FETCH_HEAD"); err != nil {
 			return fail(err)
 		}
-		if _, err := git(ctx, dir, "clean", "-ffdx"); err != nil {
+		if _, err := git(ctx, h, dir, "clean", "-ffdx"); err != nil {
 			return fail(err)
 		}
 	}
-	sha, err := git(ctx, dir, "rev-parse", "HEAD")
+	sha, err := git(ctx, h, dir, "rev-parse", "HEAD")
 	if err != nil {
 		return fail(err)
 	}
 	if branch == "" {
-		st.Branch, _ = git(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
+		st.Branch, _ = git(ctx, h, dir, "rev-parse", "--abbrev-ref", "HEAD")
 	}
 	now := time.Now()
 	st.State, st.Commit, st.SyncedAt, st.Error = "ready", sha, &now, ""
@@ -191,8 +211,8 @@ func (m *Manager) Sync(ctx context.Context, teamID string, r api.RepoRef, overri
 
 // dropLegacyClone removes a checkout in the layout used before teams could
 // have several repositories, when <base>/<team> was itself the clone.
-func (m *Manager) dropLegacyClone(teamID string) {
-	dir := filepath.Join(m.base, safeName(teamID))
+func (m *Manager) dropLegacyClone(base, teamID string) {
+	dir := filepath.Join(base, safeName(teamID))
 	m.mu.Lock()
 	var old string
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
@@ -207,17 +227,14 @@ func (m *Manager) dropLegacyClone(teamID string) {
 	}
 }
 
-func git(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	if dir != "" {
-		cmd.Dir = dir
-	}
-	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never")
-	if os.Getenv("GIT_SSH_COMMAND") == "" {
+// git runs on h in dir (a Braid path; "" for any).
+func git(ctx context.Context, h host.Host, dir string, args ...string) (string, error) {
+	env := []string{"GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never"}
+	if h.ID() != host.LocalID || os.Getenv("GIT_SSH_COMMAND") == "" {
 		// The app can't answer ssh prompts; fail fast instead of hanging.
 		env = append(env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
 	}
-	cmd.Env = env
+	cmd := h.Command(ctx, "git", args, dir, env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {

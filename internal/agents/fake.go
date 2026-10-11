@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sam-jeston/braid/internal/api"
+	"github.com/sam-jeston/braid/internal/host"
 )
 
 // Fake is a deterministic stand-in agent for tests and offline demos
@@ -21,7 +22,7 @@ type Fake struct{}
 func (f *Fake) ID() string   { return "fake" }
 func (f *Fake) Name() string { return "Fake agent (demo)" }
 
-func (f *Fake) Detect(ctx context.Context) (string, error) { return "1.0", nil }
+func (f *Fake) Detect(ctx context.Context, h host.Host) (string, error) { return "1.0", nil }
 
 func (f *Fake) Run(ctx context.Context, spec Spec, emit func(api.RunOutput)) (Result, error) {
 	delay := 40 * time.Millisecond
@@ -140,6 +141,8 @@ Effort signal: **M**.
 
 // repoFiles lists up to n files from the checkouts, labelled as run activity shows them.
 func repoFiles(spec Spec, n int) []string {
+	// The fake agent runs in-process, so it walks Braid's paths, not the host's.
+	spec.Host = nil
 	roots := spec.roots()
 	var out []string
 	for _, r := range spec.Repos {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/sam-jeston/braid/internal/api"
+	"github.com/sam-jeston/braid/internal/host"
 )
 
 func feed(t *testing.T, path string, line func([]byte)) {
@@ -167,5 +168,28 @@ func TestUnwrapShell(t *testing.T) {
 		if got := unwrapShell(in); got != want {
 			t.Errorf("unwrapShell(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// With a WSL host, every path the agent is given is the distro's own, so the
+// read-only rules apply to the files it actually opens.
+func TestArgsUseTheHostsPaths(t *testing.T) {
+	w := &host.WSL{Distro: "Ubuntu", Root: `\\wsl.localhost\Ubuntu`, Home: "/home/sam", Mount: "/mnt/"}
+	data := `\\wsl.localhost\Ubuntu\home\sam\.local\share\braid`
+	spec := Spec{Host: w, Dir: data + `\runs\r1`, Repos: []Repo{{Name: "app", Dir: data + `\repos\t\app`}, {Name: "web", Dir: `C:\code\web`}}}
+	args := strings.Join((&Claude{}).Args(spec), " ")
+	for _, want := range []string{
+		"--add-dir /home/sam/.local/share/braid/repos/t/app /mnt/c/code/web",
+		"Write(//home/sam/.local/share/braid/repos/t/app/**)", "Edit(//mnt/c/code/web/**)",
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("claude args missing %q: %s", want, args)
+		}
+	}
+	if args := strings.Join((&Codex{}).Args(spec), " "); !strings.Contains(args, "-C /home/sam/.local/share/braid/runs/r1") {
+		t.Errorf("codex args: %s", args)
+	}
+	if got := rel("/home/sam/.local/share/braid/repos/t/app/src/x.ts", spec.roots()); got != "app/src/x.ts" {
+		t.Errorf("activity paths should be relative to the repo: %q", got)
 	}
 }

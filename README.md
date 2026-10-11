@@ -71,6 +71,8 @@ make desktop                         # Ubuntu 24.04+: make desktop WAILS_TAGS=we
 make desktop-windows                 # cross-compiles bin/Braid.exe (WebView2)
 ```
 
+**Windows with WSL:** if your `claude`, `codex` and git logins (e.g. `gh auth login`) live in a WSL distribution, run the Windows app as usual. Braid runs the agents and git inside WSL, and keeps its clones in `~/.local/share/braid` there. When the agents aren't installed on Windows, it picks your default distribution by itself; choose another in **Settings → This device → Run agents in**. Agents started this way don't load your shell startup files, so env vars you only set in `~/.bashrc` (e.g. Bedrock or proxy settings) won't apply. Logins stored in `~/.claude` and `~/.codex` work.
+
 ### 3. Create or join a team
 
 - **Create:** server URL + setup code, your roles, the repository (any git URL your machine can clone; add more if your product spans several), and where plans go (Linear team key / Jira site + project / Markdown). Braid then scans the codebase on your machine and writes a shared *codebase brief* and *agent rules* that every future run gets.
@@ -108,6 +110,7 @@ make dev-app           # rebuilds the UI on change and serves it from disk
 | `internal/workflow` | stages, ownership rules, prompts, plan schema |
 | `internal/export` | Markdown, Linear (GraphQL), Jira (REST + ADF) |
 | `internal/repo` | managed read-only clones |
+| `internal/host` | runs agent CLIs and git on this computer or inside WSL |
 | `frontend/` | React UI, built with Bun and embedded via `go:embed` |
 
 CI runs on every push and pull request; tagging `v*` publishes a release. See [docs/RELEASING.md](docs/RELEASING.md) for what's built and the signing setup.

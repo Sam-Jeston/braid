@@ -368,6 +368,20 @@ function DeviceSettings() {
           </Button>
         </div>
         <p className="muted small">Agents run on this machine with your own subscription or API key. Braid never sends code to the server, only the documents and activity the agent produces.</p>
+        {l.agent_hosts.length > 1 && (
+          <Field label="Run agents in" hint="In WSL, Braid uses the Claude Code, Codex and git logins inside that Linux distribution, and keeps its clones there.">
+            <div className="agent-options">
+              {l.agent_hosts.map((h) => (
+                <button key={h.id} className={cx("agent-option", l.agent_host === h.id && "on")} onClick={() => patch({ agent_host: h.id }, `Agents now run in ${h.label}`)}>
+                  <Icon name={l.agent_host === h.id ? "check" : h.id.startsWith("wsl:") ? "terminal" : "server"} />
+                  <div>
+                    <b>{h.label}</b>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </Field>
+        )}
         <div className="agent-options">
           {l.agents.map((a) => (
             <button key={a.id} className={cx("agent-option", l.agent === a.id && "on", !a.available && "unavailable")} disabled={!a.available} onClick={() => patch({ agent: a.id }, `${a.name} selected`)}>
@@ -420,7 +434,10 @@ function DeviceSettings() {
                 <span>Commit</span>
                 <code>{st?.commit || "—"}</code>
               </div>
-              <Field label="Use an existing local checkout instead" hint="Braid reads it as-is and never resets it. Leave blank to let Braid manage its own clone.">
+              <Field
+                label="Use an existing local checkout instead"
+                hint={`Braid reads it as-is and never resets it. Leave blank to let Braid manage its own clone.${l.agent_host.startsWith("wsl:") ? " Paths inside WSL, like /home/you/code/app, work too." : ""}`}
+              >
                 <div className="inline-input">
                   <input className="mono" value={override} onChange={(e) => setOverrides({ ...overrides, [r.name]: e.target.value })} placeholder={`/home/you/code/${r.name}`} />
                   <Button size="sm" onClick={() => patch({ repo_overrides: { [r.name]: override } })}>

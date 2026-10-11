@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/sam-jeston/braid/internal/api"
+	"github.com/sam-jeston/braid/internal/host"
+	"github.com/sam-jeston/braid/internal/host/hosttest"
 )
 
 // stubCLI puts an executable shell script called name first on PATH.
@@ -112,16 +114,50 @@ func TestRunCancelStopsTheProcessGroup(t *testing.T) {
 
 func TestDetect(t *testing.T) {
 	stubCLI(t, "claude", `echo "9.9.9 (Claude Code)"`)
-	v, err := (&Claude{}).Detect(context.Background())
+	v, err := (&Claude{}).Detect(context.Background(), host.Local{})
 	if err != nil || v != "9.9.9" {
 		t.Errorf("claude version = %q, %v", v, err)
 	}
 	t.Setenv("BRAID_FAKE_AGENT", "1")
-	infos := Detect(context.Background())
+	infos := Detect(context.Background(), host.Local{})
 	if len(infos) != 3 || infos[0].ID != "claude" || !infos[0].Available || infos[2].ID != "fake" {
 		t.Errorf("detect = %+v", infos)
 	}
 	if _, ok := Get("nope"); ok {
 		t.Error("unknown agent found")
+	}
+}
+
+// In WSL the CLI is found in its usual install dir (wsl.exe's PATH doesn't
+// include it), runs in the run dir, and still gets the prompt on stdin.
+func TestClaudeRunsInWSL(t *testing.T) {
+	fixture, _ := filepath.Abs("testdata/claude.jsonl")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", "/usr/bin:/bin")
+	claude := filepath.Join(home, ".local", "bin", "claude")
+	if err := os.MkdirAll(filepath.Dir(claude), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+case $1 in --version) echo "2.1.0 (Claude Code)"; exit ;; esac
+cat > "$PWD/prompt.txt"; printf '%s\n' "$@" > "$PWD/args.txt"; cat '` + fixture + `'`
+	if err := os.WriteFile(claude, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	w := &host.WSL{Distro: "Ubuntu", Exe: hosttest.FakeWSL(t), Home: home, Mount: "/mnt/"}
+	if v, err := (&Claude{}).Detect(context.Background(), w); err != nil || v != "2.1.0" {
+		t.Fatalf("detect in WSL = %q, %v", v, err)
+	}
+	work, repo := t.TempDir(), t.TempDir()
+	res, err := (&Claude{}).Run(context.Background(), Spec{Host: w, Dir: work, Repos: []Repo{{Name: "app", Dir: repo}}, Prompt: "Spar on this idea"}, func(api.RunOutput) {})
+	if err != nil || res.Reply == "" {
+		t.Fatalf("reply %q, %v", res.Reply, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(work, "prompt.txt")); string(b) != "Spar on this idea" {
+		t.Errorf("stdin = %q", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(work, "args.txt")); !strings.Contains(string(b), "Write(/"+repo+"/**)") {
+		t.Errorf("the repo must stay read-only: %s", b)
 	}
 }

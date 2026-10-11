@@ -51,6 +51,9 @@ type Config struct {
 	JiraEmail     string    `json:"jira_email"`
 	ExportDir     string    `json:"export_dir"`
 	SecretBackend string    `json:"secret_backend"`
+	// AgentHost is where agents and git run: "local" or "wsl:<distro>".
+	// Empty until chosen, which lets Windows pick WSL automatically.
+	AgentHost string `json:"agent_host,omitempty"`
 }
 
 func loadConfig(path string) (*Config, error) {

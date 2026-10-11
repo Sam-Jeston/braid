@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sam-jeston/braid/internal/api"
+	"github.com/sam-jeston/braid/internal/host"
 )
 
 // Claude runs Claude Code headlessly (`claude -p --output-format stream-json`).
@@ -21,12 +22,12 @@ type Claude struct{}
 func (c *Claude) ID() string   { return "claude" }
 func (c *Claude) Name() string { return "Claude Code" }
 
-func (c *Claude) Detect(ctx context.Context) (string, error) {
-	bin, err := lookPath("claude")
+func (c *Claude) Detect(ctx context.Context, h host.Host) (string, error) {
+	bin, err := h.LookPath(ctx, "claude")
 	if err != nil {
 		return "", err
 	}
-	v, err := version(ctx, bin, "--version")
+	v, err := version(ctx, h, bin, "--version")
 	return strings.TrimSuffix(v, " (Claude Code)"), err
 }
 
@@ -46,7 +47,7 @@ func (c *Claude) Args(spec Spec) []string {
 	if len(spec.Repos) > 0 {
 		var dirs, deny []string
 		for _, r := range spec.Repos {
-			dir := strings.TrimRight(r.Dir, "/")
+			dir := strings.TrimRight(spec.host().Path(r.Dir), "/")
 			dirs = append(dirs, dir)
 			deny = append(deny, "Write(/"+dir+"/**)", "Edit(/"+dir+"/**)")
 		}
@@ -59,12 +60,13 @@ func (c *Claude) Args(spec Spec) []string {
 }
 
 func (c *Claude) Run(ctx context.Context, spec Spec, emit func(api.RunOutput)) (Result, error) {
-	bin, err := lookPath("claude")
+	h := spec.host()
+	bin, err := h.LookPath(ctx, "claude")
 	if err != nil {
 		return Result{}, err
 	}
 	p := &claudeParser{emit: emit, roots: spec.roots()}
-	runErr := runLines(ctx, bin, c.Args(spec), spec.Dir, spec.Prompt, p.line)
+	runErr := runLines(ctx, h, bin, c.Args(spec), spec.Dir, spec.Prompt, p.line)
 	if p.done {
 		if p.isError {
 			return p.result, fmt.Errorf("claude: %s", clip(p.errMsg, 500))

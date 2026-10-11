@@ -16,6 +16,7 @@ import (
 	"github.com/sam-jeston/braid/internal/agents"
 	"github.com/sam-jeston/braid/internal/api"
 	"github.com/sam-jeston/braid/internal/client"
+	"github.com/sam-jeston/braid/internal/host"
 	"github.com/sam-jeston/braid/internal/workflow"
 )
 
@@ -31,22 +32,27 @@ type StartRunInput struct {
 	TriggerMessageID string    `json:"trigger_message_id"`
 }
 
-func (c *Core) pickAgent(ctx context.Context) (agents.Agent, string, string, error) {
+// pickAgent returns the chosen agent, the host it runs on, its version and
+// the model override.
+func (c *Core) pickAgent(ctx context.Context) (agents.Agent, host.Host, string, string, error) {
 	c.mu.Lock()
-	id, model := c.cfg.Agent, c.cfg.AgentModel
+	id, model, h, herr := c.cfg.Agent, c.cfg.AgentModel, c.host, c.hostErr
 	c.mu.Unlock()
+	if herr != nil {
+		return nil, nil, "", "", fmt.Errorf("%v; choose where agents run in Settings", herr)
+	}
 	if id == "" {
-		return nil, "", "", errors.New("no coding agent found on this machine: install Claude Code or Codex, then pick it in Settings")
+		return nil, nil, "", "", errors.New("no coding agent found on this machine: install Claude Code or Codex, then pick it in Settings")
 	}
 	a, ok := agents.Get(id)
 	if !ok {
-		return nil, "", "", fmt.Errorf("unknown agent %q; pick one in Settings", id)
+		return nil, nil, "", "", fmt.Errorf("unknown agent %q; pick one in Settings", id)
 	}
-	v, err := a.Detect(ctx)
+	v, err := a.Detect(ctx, h)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("%s isn't available on this machine: %v", a.Name(), err)
+		return nil, nil, "", "", fmt.Errorf("%s isn't available %s: %v", a.Name(), where(h), err)
 	}
-	return a, v, model, nil
+	return a, h, v, model, nil
 }
 
 // StartRun claims the stage on the server (so teammates see the agent start
@@ -56,7 +62,7 @@ func (c *Core) StartRun(ctx context.Context, in StartRunInput) (api.Run, error) 
 	if err != nil {
 		return api.Run{}, err
 	}
-	agent, ver, model, err := c.pickAgent(ctx)
+	agent, h, ver, model, err := c.pickAgent(ctx)
 	if err != nil {
 		return api.Run{}, err
 	}
@@ -66,7 +72,7 @@ func (c *Core) StartRun(ctx context.Context, in StartRunInput) (api.Run, error) 
 	if err != nil {
 		return run, err
 	}
-	c.launch(s, run, agent, model)
+	c.launch(s, run, agent, h, model)
 	return run, nil
 }
 
@@ -76,7 +82,7 @@ func (c *Core) StartScan(ctx context.Context) (api.Run, error) {
 	if err != nil {
 		return api.Run{}, err
 	}
-	agent, ver, model, err := c.pickAgent(ctx)
+	agent, h, ver, model, err := c.pickAgent(ctx)
 	if err != nil {
 		return api.Run{}, err
 	}
@@ -84,7 +90,7 @@ func (c *Core) StartScan(ctx context.Context) (api.Run, error) {
 	if err != nil {
 		return run, err
 	}
-	c.launch(s, run, agent, model)
+	c.launch(s, run, agent, h, model)
 	return run, nil
 }
 
@@ -96,7 +102,7 @@ func maxRunDuration() time.Duration {
 	return 45 * time.Minute
 }
 
-func (c *Core) launch(s *session, run api.Run, agent agents.Agent, model string) {
+func (c *Core) launch(s *session, run api.Run, agent agents.Agent, h host.Host, model string) {
 	ctx, cancel := context.WithTimeout(context.Background(), maxRunDuration())
 	lr := &localRun{run: run, cancel: cancel}
 	c.mu.Lock()
@@ -107,7 +113,7 @@ func (c *Core) launch(s *session, run api.Run, agent agents.Agent, model string)
 	go func() {
 		defer c.wg.Done()
 		defer cancel()
-		c.execute(ctx, s, lr, agent, model)
+		c.execute(ctx, s, lr, agent, h, model)
 		c.mu.Lock()
 		delete(c.runs, run.ID)
 		c.mu.Unlock()
@@ -140,11 +146,11 @@ func (c *Core) CancelRun(ctx context.Context, runID string) error {
 	return s.client.Do(ctx, "POST", "/v1/runs/"+runID+"/cancel", nil, nil)
 }
 
-func (c *Core) execute(ctx context.Context, s *session, lr *localRun, agent agents.Agent, model string) {
+func (c *Core) execute(ctx context.Context, s *session, lr *localRun, agent agents.Agent, h host.Host, model string) {
 	run := lr.run
 	out := newPump(s.client, run.ID, c.log, lr.cancel)
 	finish := api.FinishRunRequest{Status: api.RunFailed}
-	runDir := filepath.Join(c.home, "runs", run.ID)
+	runDir := filepath.Join(h.DataDir(), "runs", run.ID)
 	defer func() {
 		out.close()
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) && finish.Status != api.RunSucceeded {
@@ -162,7 +168,11 @@ func (c *Core) execute(ctx context.Context, s *session, lr *localRun, agent agen
 		out.emit(api.RunOutput{Kind: "error", Text: err.Error()})
 	}
 
-	out.emit(api.RunOutput{Kind: "status", Text: fmt.Sprintf("Running %s %s on %s", agent.Name(), versionLabel(agent, model), c.deviceName())})
+	msg := fmt.Sprintf("Running %s %s on %s", agent.Name(), versionLabel(agent, model), c.deviceName())
+	if h.ID() != host.LocalID {
+		msg += " in " + h.Label()
+	}
+	out.emit(api.RunOutput{Kind: "status", Text: msg})
 
 	// 1. Codebase checkout.
 	team, err := s.freshTeam(ctx)
@@ -185,9 +195,11 @@ func (c *Core) execute(ctx context.Context, s *session, lr *localRun, agent agen
 		fail(err)
 		return
 	}
-	spec := agents.Spec{Dir: runDir, Model: model, Stage: string(run.Stage)}
-	for _, co := range repoInfo.Checkouts {
+	spec := agents.Spec{Host: h, Dir: runDir, Model: model, Stage: string(run.Stage)}
+	for i, co := range repoInfo.Checkouts {
 		spec.Repos = append(spec.Repos, agents.Repo{Name: co.Name, Dir: co.Dir})
+		// Prompts cite the paths the agent sees.
+		repoInfo.Checkouts[i].Dir = h.Path(co.Dir)
 	}
 	var allowed func(string) bool
 	initial := map[string]string{}

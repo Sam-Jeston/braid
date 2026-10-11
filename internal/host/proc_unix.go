@@ -1,23 +1,27 @@
 //go:build !windows
 
-package agents
+package host
 
 import (
 	"os/exec"
 	"syscall"
 )
 
-func setProcessGroup(cmd *exec.Cmd) {
+func hideWindow(cmd *exec.Cmd) {}
+
+// SetProcessGroup starts cmd in its own process group, so InterruptGroup and
+// KillGroup reach the children it starts too.
+func SetProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
-func interruptGroup(cmd *exec.Cmd) {
+func InterruptGroup(cmd *exec.Cmd) {
 	if cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGINT)
 	}
 }
 
-func killGroup(cmd *exec.Cmd) {
+func KillGroup(cmd *exec.Cmd) {
 	if cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}

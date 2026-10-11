@@ -10,23 +10,32 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/sam-jeston/braid/internal/api"
+	"github.com/sam-jeston/braid/internal/host"
 )
 
-// Spec describes one agent invocation.
+// Spec describes one agent invocation. Dirs are Braid's paths; the agent
+// gets them as Host.Path maps them.
 type Spec struct {
-	Dir    string // writable working directory (Braid scratch space)
-	Repos  []Repo // read-only codebase checkouts; empty when unavailable
-	System string // appended to the agent's system prompt
-	Prompt string // task + context, sent on stdin
-	Model  string // optional model override
-	Stage  string // informational
+	Host   host.Host // where the CLI runs; nil means this computer
+	Dir    string    // writable working directory (Braid scratch space)
+	Repos  []Repo    // read-only codebase checkouts; empty when unavailable
+	System string    // appended to the agent's system prompt
+	Prompt string    // task + context, sent on stdin
+	Model  string    // optional model override
+	Stage  string    // informational
+}
+
+func (s Spec) host() host.Host {
+	if s.Host == nil {
+		return host.Local{}
+	}
+	return s.Host
 }
 
 // Repo is one read-only checkout the agent may read.
@@ -35,19 +44,20 @@ type Repo struct {
 	Dir  string
 }
 
-// roots maps the directories an agent touches to the labels shown in run
-// activity: paths in the run dir and in a lone repo are shown bare, and
-// with several repos they're prefixed by the repo's name.
+// roots maps the directories an agent touches, as the agent sees them, to
+// the labels shown in run activity: paths in the run dir and in a lone repo
+// are shown bare, and with several repos they're prefixed by the repo's name.
 func (s Spec) roots() []root {
+	h := s.host()
 	var out []root
 	for _, r := range s.Repos {
 		label := ""
 		if len(s.Repos) > 1 {
 			label = r.Name
 		}
-		out = append(out, root{dir: r.Dir, label: label})
+		out = append(out, root{dir: h.Path(r.Dir), label: label})
 	}
-	return append(out, root{dir: s.Dir})
+	return append(out, root{dir: h.Path(s.Dir)})
 }
 
 type root struct{ dir, label string }
@@ -60,8 +70,8 @@ type Result struct {
 type Agent interface {
 	ID() string
 	Name() string
-	// Detect returns the installed version, or an error if unavailable.
-	Detect(ctx context.Context) (string, error)
+	// Detect returns the version installed on h, or an error if unavailable.
+	Detect(ctx context.Context, h host.Host) (string, error)
 	Run(ctx context.Context, spec Spec, emit func(api.RunOutput)) (Result, error)
 }
 
@@ -92,11 +102,12 @@ func Get(id string) (Agent, bool) {
 	return nil, false
 }
 
-func Detect(ctx context.Context) []Info {
+// Detect reports which agents are installed on h.
+func Detect(ctx context.Context, h host.Host) []Info {
 	var out []Info
 	for _, a := range All() {
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		v, err := a.Detect(ctx)
+		v, err := a.Detect(ctx, h)
 		cancel()
 		info := Info{ID: a.ID(), Name: a.Name(), Available: err == nil, Version: v}
 		if err != nil {
@@ -107,55 +118,8 @@ func Detect(ctx context.Context) []Info {
 	return out
 }
 
-// sessionEnv strips variables that would make a child CLI think it is nested
-// inside another agent session.
-func sessionEnv() []string {
-	drop := map[string]bool{
-		"CLAUDECODE": true, "CLAUDE_CODE_ENTRYPOINT": true, "CLAUDE_CODE_SESSION_ID": true,
-		"CLAUDE_CODE_CHILD_SESSION": true, "CLAUDE_CODE_MESSAGING_SOCKET": true, "CLAUDE_CODE_MESSAGING_TOKEN": true,
-		"CLAUDE_CODE_SESSION_ATTENDED": true, "CLAUDE_PID": true, "CLAUDE_EFFORT": true, "CLAUDE_CODE_EXECPATH": true,
-		"AI_AGENT": true, "CODEX_THREAD_ID": true, "CODEX_SANDBOX": true,
-	}
-	var env []string
-	for _, kv := range os.Environ() {
-		k, _, _ := strings.Cut(kv, "=")
-		if !drop[k] {
-			env = append(env, kv)
-		}
-	}
-	return env
-}
-
-// lookPath finds a CLI on PATH, falling back to common install locations
-// because GUI apps often start with a minimal PATH.
-func lookPath(name string) (string, error) {
-	if p, err := exec.LookPath(name); err == nil {
-		return p, nil
-	}
-	home, _ := os.UserHomeDir()
-	candidates := []string{
-		filepath.Join(home, ".local", "bin", name),
-		filepath.Join(home, ".claude", "local", name),
-		filepath.Join(home, ".npm-global", "bin", name),
-		filepath.Join(home, ".bun", "bin", name),
-		"/opt/homebrew/bin/" + name,
-		"/usr/local/bin/" + name,
-	}
-	if nvm, _ := filepath.Glob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin", name)); len(nvm) > 0 {
-		candidates = append(candidates, nvm[len(nvm)-1])
-	}
-	for _, c := range candidates {
-		if st, err := os.Stat(c); err == nil && !st.IsDir() {
-			return c, nil
-		}
-	}
-	return "", fmt.Errorf("%s not found on PATH", name)
-}
-
-func version(ctx context.Context, bin string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Env = sessionEnv()
-	out, err := cmd.Output()
+func version(ctx context.Context, h host.Host, bin string, args ...string) (string, error) {
+	out, err := h.Command(ctx, bin, args, "").Output()
 	if err != nil {
 		return "", fmt.Errorf("%s %s failed: %w", filepath.Base(bin), strings.Join(args, " "), err)
 	}
@@ -185,16 +149,15 @@ func (t *tail) String() string {
 	return strings.TrimSpace(string(t.buf))
 }
 
-// runLines starts bin, feeds stdin, and calls onLine for every stdout line.
-// Cancelling ctx interrupts the whole process group.
-func runLines(ctx context.Context, bin string, args []string, dir, stdin string, onLine func([]byte)) error {
-	cmd := exec.Command(bin, args...)
-	cmd.Dir = dir
-	cmd.Env = sessionEnv()
+// runLines starts bin on h in dir, feeds stdin, and calls onLine for every
+// stdout line. Cancelling ctx interrupts the whole process group.
+func runLines(ctx context.Context, h host.Host, bin string, args []string, dir, stdin string, onLine func([]byte)) error {
+	// Not ctx: cancelling interrupts first and only kills after a grace period.
+	cmd := h.Command(context.Background(), bin, args, dir)
 	cmd.Stdin = strings.NewReader(stdin)
 	stderr := &tail{n: 8 << 10}
 	cmd.Stderr = stderr
-	setProcessGroup(cmd)
+	host.SetProcessGroup(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -206,11 +169,11 @@ func runLines(ctx context.Context, bin string, args []string, dir, stdin string,
 	go func() {
 		select {
 		case <-ctx.Done():
-			interruptGroup(cmd)
+			host.InterruptGroup(cmd)
 			select {
 			case <-done:
 			case <-time.After(5 * time.Second):
-				killGroup(cmd)
+				host.KillGroup(cmd)
 			}
 		case <-done:
 		}
@@ -223,7 +186,7 @@ func runLines(ctx context.Context, bin string, args []string, dir, stdin string,
 		}
 		if err != nil {
 			if !errors.Is(err, io.EOF) && ctx.Err() == nil {
-				killGroup(cmd)
+				host.KillGroup(cmd)
 			}
 			break
 		}

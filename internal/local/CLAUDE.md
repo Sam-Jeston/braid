@@ -13,10 +13,16 @@ The desktop core, shared by `cmd/braid` (browser UI) and `desktop/` (Wails).
 
 - `StartRun` / `StartScan` create the remote run **first**, which claims the stage so teammates see it immediately. Execution then continues in a goroutine tracked by `c.wg`.
 - Each run is stateless: it rebuilds context from the thread (`buildPromptInput`) and writes stage docs into a scratch dir (`materialize`). The approved upstream docs go under `upstream/`.
+- A run keeps the agent host it started with (`pickAgent`). Its scratch dir and the managed clones live under that host's `DataDir()`: the Braid home locally, `~/.local/share/braid` inside WSL. Prompts get checkout paths as the agent sees them (`Host.Path`).
 - Only paths allowed by `workflow.ValidArtifactPath` / `ValidScanPath` are collected. Deleted mockups become tombstones.
 - `pump` batches output every 300ms and doubles as the heartbeat. Server-side, a run that misses heartbeats for 2 minutes is marked abandoned. A 409 from the server means the run was closed remotely, so stop work on it.
 - Always report a finish (`c.finish` retries). Cancelled runs upload no artifacts.
 - Each team repository has its own managed clone, synced concurrently (`syncRepos`). Don't `git reset` a clone while a run is using it (`activeRunsFor`): later runs only sync what's missing.
+
+## Agent host
+
+- `Config.AgentHost` is "local" or "wsl:<distro>". While it's empty, `refreshAgents` picks the default WSL distro if agents are installed there and not natively. That only happens on Windows; an explicit choice is never overridden.
+- Host discovery goes through `Core.hosts` so tests can stand in for WSL (`internal/host/hosttest.FakeWSL`). `refreshAgents` calls wsl.exe, so never call it under `Core.mu`.
 
 ## Delivery tracking (`delivery.go`)
 
