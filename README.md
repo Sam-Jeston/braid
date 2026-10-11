@@ -50,6 +50,8 @@ docker build -t braid-server . && docker run -p 8080:8080 -v braid-data:/data br
 
 The app only accepts HTTPS servers, except on localhost. In production, put the server behind a TLS proxy (e.g. `caddy reverse-proxy --from braid.example.com --to :8080`) and pass `--trust-proxy`, or use `--tls-cert/--tls-key`.
 
+To run it as a systemd service on a Linux machine you can ssh to, `make deploy-server DEPLOY_HOST=user@host` builds the server for that machine and installs it from `packaging/linux`. It listens on `127.0.0.1:8080` for a proxy or tunnel on the same machine. Run it again to update: it snapshots the database first, and puts the previous binary back if the new one fails its health check.
+
 ### 2. Run the app
 
 **Browser mode** works anywhere: it's the same core, and the UI opens in your browser.

@@ -1,0 +1,41 @@
+# systemd unit for braid-server, installed by packaging/linux/install.sh
+# (scripts/deploy-server.sh runs it for you). Serves plain HTTP on loopback
+# for a TLS-terminating proxy or tunnel on the same machine. Override any
+# BRAID_* variable in /etc/default/braid-server, then restart the service.
+[Unit]
+Description=Braid team server
+Documentation=https://github.com/Sam-Jeston/braid
+After=network-online.target
+Wants=network-online.target
+# Keep retrying forever, e.g. while a disk is still mounting after a power cut.
+StartLimitIntervalSec=0
+
+[Service]
+User=braid
+Group=braid
+Environment=BRAID_ADDR=127.0.0.1:8080
+Environment=BRAID_DB=/var/lib/braid/braid.db
+Environment=BRAID_TRUST_PROXY=true
+EnvironmentFile=-/etc/default/braid-server
+ExecStart=/usr/local/bin/braid-server serve
+Restart=always
+RestartSec=2
+StateDirectory=braid
+StateDirectoryMode=0750
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

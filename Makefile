@@ -9,7 +9,7 @@ DESKTOP_TAGS = desktop,production$(addprefix $(comma),$(WAILS_TAGS))
 # Minimum Go statement coverage enforced by `make cover` (and CI).
 COVER_MIN ?= 75
 
-.PHONY: all frontend server app desktop desktop-windows test cover dist dist-desktop-linux dist-desktop-windows dist-desktop-macos dev-server dev-app demo docker clean
+.PHONY: all frontend server app desktop desktop-windows test cover dist dist-desktop-linux dist-desktop-windows dist-desktop-macos deploy-server dev-server dev-app demo docker clean
 
 all: server app
 
@@ -63,6 +63,10 @@ dist-desktop-windows: desktop-windows
 
 dist-desktop-macos: frontend
 	VERSION=$(VERSION) scripts/package-macos.sh
+
+## deploy-server: build braid-server for DEPLOY_HOST (user@host) and install or update it there as a systemd service
+deploy-server:
+	VERSION=$(VERSION) scripts/deploy-server.sh $(DEPLOY_HOST)
 
 ## dev-server: run a local team server on :8080 (prints a setup code on first run)
 dev-server:
