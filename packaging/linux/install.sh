@@ -89,6 +89,7 @@ for _ in $(seq 20); do
     echo "$new_version is running ($url)."
     echo "Logs: journalctl -u braid-server -f"
     echo "New team setup code: sudo -u braid $dest setup-code --db $db"
+    echo "Sign a member back in: sudo -u braid $dest recovery-code --db $db"
     exit 0
   fi
 done

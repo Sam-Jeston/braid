@@ -23,13 +23,20 @@ Join (once per device per team)
         signature = Sign("braid-register-v1\n{server_id}\n{normalized code}\n{public_key}")
   server: verify signature, check invite (hashed, unexpired, uses < max), create member + device
 
+Recovery (a member who lost every device, such as a team's only admin)
+  operator, on the server host: braid-server recovery-code [--team T] [--member M] → single-use code for that member
+  app → POST /v1/invites/redeem, exactly as for an invite (member fields are ignored)
+  server: check code (hashed, unexpired, unused, member not removed), revoke the member's devices and sessions,
+          register the new device for the existing member, close the old devices' websockets
+
 Session (hourly)
   app → POST /v1/auth/challenge {device_id}            ← {nonce} (single use, 2 min)
   app → POST /v1/auth/token {device_id, nonce, Sign("braid-token-v1\n{server_id}\n{device_id}\n{nonce}")}
   server: verify with stored public key → opaque bearer token (stored hashed, 1h TTL)
 ```
 
-- Invite and setup codes are random Crockford base32 (60/80 bits), stored as SHA-256, rate limited per IP, and normalized for case and confusable characters.
+- Invite, setup and recovery codes are random Crockford base32 (60/80/80 bits), stored as SHA-256, rate limited per IP, and normalized for case and confusable characters.
+- Recovery codes stand in for the passwords the server doesn't have: minting one needs the server's database, not an account. A new code replaces the member's unused one, and codes last 24 hours unless `--ttl` says otherwise.
 - `server_id` is pinned in the client profile at join time. Signatures are bound to it, and each team profile has its own key, so a signature can't be replayed to another server.
 - Revoking a device or removing a member deletes its sessions immediately and closes its websockets.
 - The app refuses plain-HTTP servers except on loopback, unless you explicitly opt in for a LAN.

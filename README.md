@@ -77,6 +77,7 @@ make desktop-windows                 # cross-compiles bin/Braid.exe (WebView2)
 
 - **Create:** server URL + setup code, your roles, the repository (any git URL your machine can clone; add more if your product spans several), and where plans go (Linear team key / Jira site + project / Markdown). Braid then scans the codebase on your machine and writes a shared *codebase brief* and *agent rules* that every future run gets.
 - **Join:** server URL + an invite code from **Settings → Members & invites**. Invites carry roles and expire.
+- **Recover:** if you've lost every device you used with a team (as the team's only admin, nobody can invite you back), run `braid-server recovery-code` on the server, then enter the code under **Join a team**. You come back as the same member, with your threads and admin rights, and your old devices are signed out. On a systemd install, run `sudo -u braid braid-server recovery-code --db /var/lib/braid/braid.db`. If the server has several teams, or the team has several admins, the command lists them so you can pick one with `--team` or `--member`.
 
 Then pick your agent and add tracker credentials in **Settings → This device**.
 
@@ -101,7 +102,7 @@ make dev-app           # rebuilds the UI on change and serves it from disk
 
 | Path | What |
 |---|---|
-| `cmd/braid-server` | server binary (`serve`, `setup-code`) |
+| `cmd/braid-server` | server binary (`serve`, `setup-code`, `recovery-code`) |
 | `cmd/braid` | local core + browser UI |
 | `desktop/` | Wails native shell around the same core |
 | `internal/server` | HTTP API, SQLite store, websocket hub, run reaper |

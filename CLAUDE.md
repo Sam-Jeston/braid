@@ -26,7 +26,7 @@ go test ./internal/local -run TestPipeline -race   # full two-teammate pipeline 
 
 | Path | Role |
 |---|---|
-| `cmd/braid-server` | server binary (`serve`, `setup-code`) |
+| `cmd/braid-server` | server binary (`serve`, `setup-code`, `recovery-code`) |
 | `cmd/braid` | local core + UI served to the browser |
 | `desktop/` | Wails window around the same core (build tags `desktop,production`) |
 | `internal/api` | wire types shared by server, core and (mirrored) UI |

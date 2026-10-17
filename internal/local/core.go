@@ -396,11 +396,26 @@ func (c *Core) addProfile(pr ProbeResult, resp api.JoinResponse, key string) (Pr
 		return p, fmt.Errorf("store device key: %w", err)
 	}
 	c.mu.Lock()
-	c.cfg.Profiles = append(c.cfg.Profiles, p)
+	// A recovery code signs in as an existing member, whose profile on this
+	// machine (with a lost key) the new one replaces.
+	var keep []Profile
+	var stale []string
+	for _, x := range c.cfg.Profiles {
+		if x.ServerID == p.ServerID && x.MemberID == p.MemberID {
+			p.RepoOverrides, p.RepoOverride = x.RepoOverrides, x.RepoOverride
+			stale = append(stale, x.ID)
+			continue
+		}
+		keep = append(keep, x)
+	}
+	c.cfg.Profiles = append(keep, p)
 	err := c.saveConfig()
 	c.mu.Unlock()
 	if err != nil {
 		return p, err
+	}
+	for _, id := range stale {
+		_ = c.secrets.Delete(keyName(id))
 	}
 	return p, c.Activate(p.ID)
 }

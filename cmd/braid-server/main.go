@@ -29,6 +29,9 @@ func main() {
 		case "setup-code":
 			setupCode(os.Args[2:])
 			return
+		case "recovery-code":
+			recoveryCode(os.Args[2:])
+			return
 		case "version", "--version", "-v":
 			fmt.Println("braid-server", version)
 			return
@@ -44,8 +47,10 @@ func usage() {
 	fmt.Fprint(os.Stderr, `braid-server — self-hosted state server for Braid
 
 Usage:
-  braid-server [serve] [flags]     run the server (default)
-  braid-server setup-code [flags]  mint a single-use code for creating a team
+  braid-server [serve] [flags]        run the server (default)
+  braid-server setup-code [flags]     mint a single-use code for creating a team
+  braid-server recovery-code [flags]  mint a single-use code that lets a member
+                                      who lost their devices sign back in
   braid-server version
 
 Run "braid-server serve -h" for flags. Every flag can also be set with an
@@ -155,4 +160,36 @@ func setupCode(args []string) {
 		os.Exit(1)
 	}
 	fmt.Println(code)
+}
+
+func recoveryCode(args []string) {
+	fs := flag.NewFlagSet("recovery-code", flag.ExitOnError)
+	dbPath := fs.String("db", env("BRAID_DB", "./data/braid.db"), "SQLite database path")
+	team := fs.String("team", "", "team name or ID (needed when the server has several teams)")
+	member := fs.String("member", "", "member name or ID (default: the team's admin)")
+	ttl := fs.Duration("ttl", 24*time.Hour, "how long the code stays valid")
+	fs.Parse(args)
+	fail := func(err error) {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if _, err := os.Stat(*dbPath); err != nil {
+		fail(fmt.Errorf("there's no Braid database at %s. Pass the server's database with --db or BRAID_DB", *dbPath))
+	}
+	if *ttl <= 0 {
+		fail(errors.New("--ttl must be positive"))
+	}
+	srv, err := server.New(server.Config{DBPath: *dbPath, Version: version, Logger: newLogger("warn")})
+	if err != nil {
+		fail(err)
+	}
+	defer srv.Close()
+	rc, err := srv.CreateRecoveryCode(context.Background(), *team, *member, *ttl)
+	if err != nil {
+		fail(err)
+	}
+	fmt.Println(rc.Code)
+	fmt.Fprintf(os.Stderr, "\nThis code signs %s back in to %s. In Braid, choose Join a team and enter\n"+
+		"the server URL and this code. It works once, until %s, and signs out\n"+
+		"%s's other devices.\n", rc.Member.DisplayName, rc.Team.Name, rc.ExpiresAt.Local().Format("2 Jan 15:04"), rc.Member.DisplayName)
 }

@@ -193,6 +193,18 @@ var migrations = []string{
 	ALTER TABLE threads ADD COLUMN delivery_at INTEGER;
 	UPDATE threads SET delivery = 'planned', delivery_at = (SELECT MAX(created_at) FROM exports WHERE thread_id = threads.id)
 		WHERE id IN (SELECT thread_id FROM exports);`,
+
+	// Recovery codes sign a new device in as an existing member, for members
+	// (usually the team's creator) who lost every device they had.
+	`CREATE TABLE recovery_codes (
+		id TEXT PRIMARY KEY,
+		member_id TEXT NOT NULL REFERENCES members(id),
+		code_hash TEXT NOT NULL UNIQUE,
+		created_at INTEGER NOT NULL,
+		expires_at INTEGER NOT NULL,
+		used_at INTEGER,
+		device_id TEXT
+	);`,
 }
 
 func openDB(path string) (*sql.DB, error) {

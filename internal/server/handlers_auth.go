@@ -119,19 +119,24 @@ func (s *Server) insertMemberAndDevice(ctx context.Context, tx *Tx, teamID strin
 		m.ID, m.TeamID, m.DisplayName, m.Email, mustJSON(m.Roles), m.IsAdmin, ms(now)); err != nil {
 		return m, "", err
 	}
+	deviceID, err := s.insertDevice(ctx, tx, m.ID, d)
+	return m, deviceID, err
+}
+
+func (s *Server) insertDevice(ctx context.Context, tx *Tx, memberID string, d api.DeviceRegistration) (string, error) {
 	deviceID := authn.NewID("dev")
 	name := strings.TrimSpace(d.Name)
 	if len(name) > 80 {
 		name = name[:80]
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO devices (id, member_id, public_key, name, created_at) VALUES (?, ?, ?, ?, ?)`,
-		deviceID, m.ID, d.PublicKey, name, ms(now)); err != nil {
+		deviceID, memberID, d.PublicKey, name, ms(s.now())); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
-			return m, "", errf(409, "key_in_use", "this device key is already registered")
+			return "", errf(409, "key_in_use", "this device key is already registered")
 		}
-		return m, "", err
+		return "", err
 	}
-	return m, deviceID, nil
+	return deviceID, nil
 }
 
 func (s *Server) handleCreateTeam(w http.ResponseWriter, r *http.Request) error {
@@ -198,13 +203,11 @@ func (s *Server) handleRedeemInvite(w http.ResponseWriter, r *http.Request) erro
 	if err := decode(w, r, &req, 0); err != nil {
 		return err
 	}
-	if err := validateNewMember(&req.Member, false); err != nil {
-		return err
-	}
 	if err := s.verifyDevice(req.Device, req.Code); err != nil {
 		return err
 	}
 	var resp api.JoinResponse
+	recovered := false
 	err := s.tx(r.Context(), func(tx *Tx) error {
 		ctx := r.Context()
 		var inviteID, teamID, roles string
@@ -213,8 +216,14 @@ func (s *Server) handleRedeemInvite(w http.ResponseWriter, r *http.Request) erro
 			WHERE code_hash = ? AND revoked_at IS NULL AND expires_at > ? AND uses < max_uses`,
 			authn.HashCode(req.Code), ms(s.now())).Scan(&inviteID, &teamID, &roles, &admin)
 		if isNoRows(err) {
-			return errf(403, "invalid_code", "that invite code is invalid, used up or expired")
+			// Recovery codes are entered in the same form as invites.
+			recovered = true
+			resp, err = s.redeemRecoveryCode(ctx, tx, req.Code, req.Device)
+			return err
 		} else if err != nil {
+			return err
+		}
+		if err := validateNewMember(&req.Member, false); err != nil {
 			return err
 		}
 		m, deviceID, err := s.insertMemberAndDevice(ctx, tx, teamID, req.Member, parseRoles(roles), admin, req.Device)
@@ -233,6 +242,11 @@ func (s *Server) handleRedeemInvite(w http.ResponseWriter, r *http.Request) erro
 	})
 	if err != nil {
 		return err
+	}
+	if recovered {
+		// The new device hasn't connected yet, so this only drops the old ones.
+		s.hub.disconnectMember(resp.Member.ID)
+		s.log.Info("member recovered", "team", resp.Team.Name, "member", resp.Member.DisplayName)
 	}
 	writeJSON(w, 201, resp)
 	return nil

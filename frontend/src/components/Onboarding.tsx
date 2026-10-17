@@ -145,12 +145,14 @@ function JoinForm({ onBack }: { onBack: () => void }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
+  // Recovery codes (braid-server recovery-code) sign in as an existing member, so there's no name to give.
+  const recovery = /^\s*recover/i.test(code);
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     try {
-      await local("POST", "/join", { server_url: server, allow_insecure: insecure, code, display_name: name, email });
-      toast("Welcome aboard! This device is now registered with your team.", "success");
+      await local("POST", "/join", { server_url: server, allow_insecure: insecure, code, display_name: recovery ? "" : name, email: recovery ? "" : email });
+      toast(recovery ? "Welcome back! This device is signed in to your team again." : "Welcome aboard! This device is now registered with your team.", "success");
       await loadLocal();
     } catch (err) {
       errorToast(err);
@@ -162,17 +164,31 @@ function JoinForm({ onBack }: { onBack: () => void }) {
     <form className="onb-form" onSubmit={submit}>
       <h2>Join your team</h2>
       <ServerField value={server} onChange={setServer} allowInsecure={insecure} setAllowInsecure={setInsecure} />
-      <Field label="Invite code" hint="Looks like BRD-7K2M-QX9D-P4TR. Your roles come from the invite.">
+      <Field
+        label="Invite code"
+        hint={
+          recovery ? (
+            "This recovery code signs you back in as the member it was made for, and signs out that member's other devices."
+          ) : (
+            <>
+              Looks like BRD-7K2M-QX9D-P4TR. Your roles come from the invite. Lost access? Whoever runs your server can make you a recovery code with{" "}
+              <code>braid-server recovery-code</code>.
+            </>
+          )
+        }
+      >
         <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="BRD-XXXX-XXXX-XXXX" className="mono" />
       </Field>
-      <div className="grid-2">
-        <Field label="Your name">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Alex Rivera" />
-        </Field>
-        <Field label="Email (optional)">
-          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="alex@company.com" />
-        </Field>
-      </div>
+      {!recovery && (
+        <div className="grid-2">
+          <Field label="Your name">
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Alex Rivera" />
+          </Field>
+          <Field label="Email (optional)">
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="alex@company.com" />
+          </Field>
+        </div>
+      )}
       <p className="fine">
         Braid will create a signing key for <b>{hostname || "this device"}</b> and register its public half with the server.
       </p>
@@ -180,8 +196,8 @@ function JoinForm({ onBack }: { onBack: () => void }) {
         <Button type="button" variant="ghost" onClick={onBack}>
           Back
         </Button>
-        <Button variant="primary" loading={busy} disabled={!server || !code || !name}>
-          Join team
+        <Button variant="primary" loading={busy} disabled={!server || !code || (!recovery && !name)}>
+          {recovery ? "Recover access" : "Join team"}
         </Button>
       </div>
     </form>

@@ -12,12 +12,14 @@ package api
 //
 //	1: versioning introduced
 //	2: delivery tracking (Thread.Delivery, /v1/exports/planned, /v1/threads/{id}/delivery)
-const Protocol = 2
+//	3: /v1/invites/redeem also accepts recovery codes, and ignores the name for them
+const Protocol = 3
 
 // MinClientProtocol is the oldest app this server still works with. Apps
 // built before versioning existed count as protocol 0. Raise it (to the new
 // Protocol) when the server stops supporting something older apps rely on.
-// Still 0: apps from before delivery tracking ignore it and keep working.
+// Still 0: apps from before delivery tracking ignore it and keep working, and
+// they can redeem recovery codes too.
 const MinClientProtocol = 0
 
 // MinServerProtocol is the oldest server this app works with. Raise it (to
